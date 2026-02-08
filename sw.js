@@ -1,5 +1,5 @@
 // sw.js
-const VERSION = "v1.0.0"; // 🔁 غيّرها كل مرة تعمل تحديث
+const VERSION = "v1.0.1"; // 🔁 غيّرها كل مرة تعمل تحديث
 const CACHE_NAME = `pixology-${VERSION}`;
 
 // حط هنا ملفاتك الأساسية
@@ -36,6 +36,14 @@ self.addEventListener("activate", (event) => {
       await self.clients.claim();
     })(),
   );
+});
+
+
+// ✅ Allow page to trigger immediate activation
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 // ✅ HTML: شبكة أولاً (عشان أي تعديل يظهر فورًا)

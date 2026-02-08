@@ -59,10 +59,10 @@ const startGate = document.getElementById("startGate");
 
 const ROLE_KEY = "pix_role";
 
-/** ✅ اقفل شاشة البداية لو المستخدم اختار قبل كده */
-const savedRole = localStorage.getItem(ROLE_KEY);
-if (savedRole && startGate) startGate.style.display = "none";
+// ✅ فتح مباشر: اخفاء شاشة الاختيار
+if (startGate) startGate.style.display = "none";
 
+// ✅ مهم جدًا: تعريف الكاش (حل ReferenceError)
 let cache = [];
 
 /** ================== Helpers ================== */
@@ -97,7 +97,6 @@ function cardHTML(v) {
   const hours = Number(v.hours ?? 0);
 
   // ✅ لازم يبقى في ID ثابت للروابط
-  // الأفضل في public_volunteers تخلي عندك field اسمه uid أو volunteerId
   const id = v.uid || v.volunteerId || v.id || "—";
 
   const gender = v.gender || "";
@@ -171,13 +170,7 @@ function render() {
 
 /** ================== Load Volunteers (PUBLIC SAFE) ================== */
 async function loadPublicVolunteers() {
-  // ✅ الصفحة الرئيسية لازم تشتغل لأي حد
-  // هنقرأ من public_volunteers (read: true في rules)
-  // ولو الكوليكشن فاضي/مش موجود هنطلع رسالة واضحة
-
   try {
-    // ترتيب اختياري حسب createdAt
-    // لو عندك docs قديمة من غير createdAt، fallback هيشتغل
     let snap;
 
     try {
@@ -188,7 +181,6 @@ async function loadPublicVolunteers() {
       );
       snap = await getDocs(q);
     } catch (orderErr) {
-      // fallback لو مفيش createdAt أو مفيش index
       console.warn("public_volunteers orderBy fallback:", orderErr);
       snap = await getDocs(
         query(collection(db, "public_volunteers"), limit(60)),
@@ -198,25 +190,24 @@ async function loadPublicVolunteers() {
     cache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     render();
 
-    // عدادات
-    if (reqCount) reqCount.textContent = "—"; // Pending للأدمن فقط
+    if (reqCount) reqCount.textContent = "—";
   } catch (e) {
     console.error("loadPublicVolunteers error:", e);
-    cache = [];
+
+    cache = []; // ✅ مهم
     render();
 
     showError(
-      "تعذر تحميل المتطوعين. تأكد إنك أضفت Rules الخاصة بـ public_volunteers وإن الكوليكشن موجود وفيه بيانات.",
+      "تعذر تحميل المتطوعين. تأكد إن Rules الخاصة بـ public_volunteers مضافة وإن الكوليكشن موجود وفيه بيانات.",
     );
   }
 }
 
 /** ================== (Optional) Admin-only Pending Count ================== */
 async function loadPendingCountIfAdmin() {
-  // مش هنكسر الصفحة لو فشل
   try {
     if (!auth.currentUser) return;
-    // محاولة قراءة بسيطة من volunteer_requests (لو أدمن هتشتغل)
+
     const snap = await getDocs(
       query(
         collection(db, "volunteer_requests"),
@@ -224,9 +215,9 @@ async function loadPendingCountIfAdmin() {
         limit(50),
       ),
     );
+
     if (reqCount) reqCount.textContent = String(snap.size);
   } catch (e) {
-    // مش أدمن أو ممنوع → تجاهل
     if (reqCount) reqCount.textContent = "—";
   }
 }
@@ -299,7 +290,6 @@ onAuthStateChanged(auth, (user) => {
     if (btnLogout) btnLogout.style.display = "inline-flex";
     if (myProfileLink) myProfileLink.style.display = "inline-flex";
 
-    // جرب نجيب pending count للأدمن فقط
     loadPendingCountIfAdmin();
   } else {
     if (btnLogin) btnLogin.textContent = "تسجيل / إنشاء حساب";
@@ -309,7 +299,7 @@ onAuthStateChanged(auth, (user) => {
   }
 });
 
-/** ================== Start Gate: تسجيل متطوع/مؤسسة بجوجل ================== */
+/** ================== (Gate Listener kept, but gate hidden) ================== */
 startGate?.addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-type]");
   if (!btn) return;
@@ -329,7 +319,7 @@ startGate?.addEventListener("click", async (e) => {
       doc(db, "users", user.uid),
       {
         uid: user.uid,
-        role: type, // volunteer | org
+        role: type,
         active: true,
         displayName: user.displayName || "",
         email: user.email || "",

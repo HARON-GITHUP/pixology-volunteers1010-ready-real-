@@ -1,6 +1,6 @@
 // tasks.js
 import { auth, db, storage } from "./firebase.js";
-import { toast, setLoading, throttleAction } from "./ui.js";
+import { toast, throttleAction } from "./ui.js";
 
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
@@ -17,7 +17,11 @@ import {
   serverTimestamp,
   Timestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import { ref as sRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+import {
+  ref as sRef,
+  uploadBytes,
+  getDownloadURL,
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 const TASKS_COL = "tasks";
 const NOTI_COL = "notifications";
@@ -39,31 +43,44 @@ const proofMsg = document.getElementById("proofMsg");
 let currentUid = null;
 let timers = [];
 
-function tsToMs(ts){
-  try{
+// ✅ Loading محلي (بدون تعارض) + حفظ النص الأصلي
+function setLoadingBtn(btn, isLoading, text = "جارٍ التحميل...") {
+  if (!btn) return;
+  if (!btn.dataset.originalText) btn.dataset.originalText = btn.textContent;
+  btn.disabled = isLoading;
+  btn.textContent = isLoading ? text : btn.dataset.originalText;
+}
+
+function tsToMs(ts) {
+  try {
     if (!ts) return null;
     if (typeof ts.toMillis === "function") return ts.toMillis();
-    if (ts.seconds) return (ts.seconds*1000) + Math.floor((ts.nanoseconds||0)/1e6);
-  }catch(e){}
+    if (ts.seconds)
+      return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+  } catch (e) {}
   return null;
 }
 
-function fmtRemaining(ms){
-  const s = Math.max(0, Math.floor(ms/1000));
-  const h = Math.floor(s/3600);
-  const m = Math.floor((s%3600)/60);
-  const sec = s%60;
+function fmtRemaining(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
   return `${h}س ${m}د ${sec}ث`;
 }
 
-function clearTimers(){
-  timers.forEach(t=>clearInterval(t));
+function clearTimers() {
+  timers.forEach((t) => clearInterval(t));
   timers = [];
 }
 
-function norm(s){ return String(s||"").trim().toLowerCase(); }
+function norm(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase();
+}
 
-function escapeHtml(s){
+function escapeHtml(s) {
   return String(s ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -72,13 +89,13 @@ function escapeHtml(s){
     .replaceAll("'", "&#39;");
 }
 
-function mapStatus(raw){
+function mapStatus(raw) {
   const st = String(raw || "pending");
   if (st === "open") return "pending";
   return st;
 }
 
-function badge(st){
+function badge(st) {
   if (st === "accepted") return "✅ جارية";
   if (st === "waiting_proof") return "📎 مطلوب إثبات";
   if (st === "proof_submitted") return "🕒 بانتظار اعتماد الأدمن";
@@ -87,19 +104,22 @@ function badge(st){
   return "⏳ معلّقة";
 }
 
-async function markTaskAccepted(id){
+async function markTaskAccepted(id, btn) {
   if (!currentUid) return;
-  if (!throttleAction("accept-"+id, 2000)) return;
+  if (!throttleAction("accept-" + id, 2000)) return;
 
-  setLoading(true);
-  try{
-    const ref = doc(db, TASKS_COL, id);
-    const snap = await getDoc(ref);
+  setLoadingBtn(btn, true, "جارٍ البدء...");
+
+  try {
+    const refDoc = doc(db, TASKS_COL, id);
+    const snap = await getDoc(refDoc);
     const t = snap.data() || {};
     const hours = Number(t.durationHours || 0);
-    const due = Timestamp.fromMillis(Date.now() + Math.max(1,hours)*3600*1000);
+    const due = Timestamp.fromMillis(
+      Date.now() + Math.max(1, hours) * 3600 * 1000,
+    );
 
-    await updateDoc(ref, {
+    await updateDoc(refDoc, {
       status: "accepted",
       acceptedAt: serverTimestamp(),
       dueAt: due,
@@ -118,21 +138,21 @@ async function markTaskAccepted(id){
 
     toast("تم بدء المهمة ✅", "success");
     await loadTasks();
-  }catch(e){
+  } catch (e) {
     console.error(e);
     toast("تعذر قبول المهمة.", "error");
-  }finally{
-    setLoading(false);
+  } finally {
+    setLoadingBtn(btn, false);
   }
 }
 
-async function markTaskCompleted(id){
+async function markTaskCompleted(id, btn) {
   if (!currentUid) return;
-  if (!throttleAction("complete-"+id, 2000)) return;
+  if (!throttleAction("complete-" + id, 2000)) return;
 
-  setLoading(true);
-  try{
-    const ref = doc(db, TASKS_COL, id);
+  setLoadingBtn(btn, true, "جارٍ الإنهاء...");
+
+  try {
     await completeTask(id);
 
     await addDoc(collection(db, NOTI_COL), {
@@ -148,17 +168,16 @@ async function markTaskCompleted(id){
 
     toast("تم إنهاء المهمة ✅", "success");
     await loadTasks();
-  }catch(e){
+  } catch (e) {
     console.error(e);
     toast("تعذر إنهاء المهمة.", "error");
-  }finally{
-    setLoading(false);
+  } finally {
+    setLoadingBtn(btn, false);
   }
 }
 
 async function notifyAdmins(title, message, extra = {}) {
   try {
-    // send a notification to each active admin
     const qy = query(
       collection(db, "users"),
       where("active", "==", true),
@@ -184,108 +203,137 @@ async function notifyAdmins(title, message, extra = {}) {
   }
 }
 
-async function loadTasks(){
+async function loadTasks() {
   if (!tasksList) return;
   tasksList.innerHTML = '<div style="color:#64748b">تحميل...</div>';
   clearTimers();
 
   if (!currentUid) return;
 
-  try{
+  try {
     const qy = query(
       collection(db, TASKS_COL),
-      where("assignedTo","==",currentUid),
-      orderBy("createdAt","desc"),
-      limit(50)
+      where("assignedTo", "==", currentUid),
+      orderBy("createdAt", "desc"),
+      limit(50),
     );
     const snap = await getDocs(qy);
 
     const filter = String(taskFilter?.value || "");
     const q = norm(taskSearch?.value || "");
 
-    const tasks = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    const tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-    // ✅ auto-expire (when dueAt passed)
+    // ✅ auto-expire
     for (const t of tasks) {
       const st = mapStatus(t.status);
       const dueMs = tsToMs(t.dueAt);
       if (!dueMs) continue;
       if (st === "completed" || st === "expired") continue;
       if (Date.now() > dueMs) {
-        try{
+        try {
           await updateDoc(doc(db, TASKS_COL, t.id), {
             status: "expired",
             active: false,
             updatedAt: serverTimestamp(),
           });
           t.status = "expired";
-        }catch(e){}
+        } catch (e) {}
       }
     }
 
-    // ✅ proof panel (tasks that require proof)
+    // ✅ proof panel
     const proofTasks = tasks
-      .filter(t => mapStatus(t.status) === "waiting_proof")
-      .map(t => ({ id:t.id, title:t.title || "مهمة", points: Number(t.points||0), hours: Number(t.durationHours||0) }));
+      .filter((t) => mapStatus(t.status) === "waiting_proof")
+      .map((t) => ({
+        id: t.id,
+        title: t.title || "مهمة",
+        points: Number(t.points || 0),
+        hours: Number(t.durationHours || 0),
+      }));
 
-    if (proofPanel) {
+    if (proofPanel)
       proofPanel.style.display = proofTasks.length ? "block" : "none";
-    }
     if (proofTaskSelect) {
-      proofTaskSelect.innerHTML = proofTasks
-        .map(t => `<option value="${t.id}">${escapeHtml(t.title)} • (${t.hours} ساعة / ${t.points} نقطة)</option>`)
-        .join("") || "";
+      proofTaskSelect.innerHTML =
+        proofTasks
+          .map(
+            (t) =>
+              `<option value="${t.id}">${escapeHtml(t.title)} • (${t.hours} ساعة / ${t.points} نقطة)</option>`,
+          )
+          .join("") || "";
     }
     if (proofMsg) proofMsg.textContent = proofTasks.length ? "" : "";
 
-    const filtered = tasks.filter(t=>{
+    const filtered = tasks.filter((t) => {
       const st = mapStatus(t.status);
       const okSt = filter ? st === filter : true;
-      const okQ = q ? (norm(t.title).includes(q) || norm(t.details).includes(q)) : true;
+      const okQ = q
+        ? norm(t.title).includes(q) || norm(t.details).includes(q)
+        : true;
       return okSt && okQ;
     });
 
-    if (!filtered.length){
-      tasksList.innerHTML = '<div style="color:#64748b">لا يوجد مهام مطابقة.</div>';
+    if (!filtered.length) {
+      tasksList.innerHTML =
+        '<div style="color:#64748b">لا يوجد مهام مطابقة.</div>';
       return;
     }
 
-    tasksList.innerHTML = filtered.map(t=>{
-      const st = mapStatus(t.status);
-      const dur = Number(t.durationHours || 0);
-      return `
+    tasksList.innerHTML = filtered
+      .map((t) => {
+        const st = mapStatus(t.status);
+        const dur = Number(t.durationHours || 0);
+        return `
         <article class="card" style="padding:14px;border-radius:16px">
           <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
             <div style="font-weight:900">${t.title || "مهمة"}</div>
             <div style="color:#64748b;font-size:13px">${badge(st)}</div>
           </div>
-          ${t.details ? `<div style="margin-top:8px;line-height:1.9;color:#334155">${t.details}</div>` : ""}
+          ${
+            t.details
+              ? `<div style="margin-top:8px;line-height:1.9;color:#334155">${t.details}</div>`
+              : ""
+          }
           <div style="margin-top:8px;color:#64748b;line-height:1.9">
             المدة: <b>${dur}</b> ساعة
             <div id="timer-${t.id}" style="margin-top:6px; font-weight:800"></div>
           </div>
 
           <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap">
-            ${st === "pending" ? `<button class="btn btn--solid" data-accept="${t.id}" type="button">موافقة وبدء العداد</button>` : ""}
-            ${st === "accepted" ? `<button class="btn btn--solid" data-complete="${t.id}" type="button">تم التنفيذ ✅</button>` : ""}
+            ${
+              st === "pending"
+                ? `<button class="btn btn--solid" data-accept="${t.id}" type="button">موافقة وبدء العداد</button>`
+                : ""
+            }
+            ${
+              st === "accepted"
+                ? `<button class="btn btn--solid" data-complete="${t.id}" type="button">تم التنفيذ ✅</button>`
+                : ""
+            }
             ${st === "waiting_proof" ? `<div style="color:#b45309;font-weight:800">ارفع الإثبات من أسفل الصفحة</div>` : ""}
             ${st === "proof_submitted" ? `<div style="color:#64748b;font-weight:800">بانتظار اعتماد الأدمن</div>` : ""}
           </div>
         </article>
       `;
-    }).join("");
+      })
+      .join("");
 
-    tasksList.querySelectorAll("[data-accept]").forEach(btn=>{
-      btn.addEventListener("click", ()=> markTaskAccepted(btn.getAttribute("data-accept")));
+    tasksList.querySelectorAll("[data-accept]").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        markTaskAccepted(btn.getAttribute("data-accept"), btn),
+      );
     });
-    tasksList.querySelectorAll("[data-complete]").forEach(btn=>{
-      btn.addEventListener("click", ()=> markTaskCompleted(btn.getAttribute("data-complete")));
+    tasksList.querySelectorAll("[data-complete]").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        markTaskCompleted(btn.getAttribute("data-complete"), btn),
+      );
     });
 
     // Timers
-    filtered.forEach(t=>{
+    filtered.forEach((t) => {
       const st = mapStatus(t.status);
-      const el = document.getElementById("timer-"+t.id);
+      const el = document.getElementById("timer-" + t.id);
       if (!el) return;
 
       if (st === "pending") {
@@ -315,14 +363,14 @@ async function loadTasks(){
       }
 
       const dueMs = tsToMs(t.dueAt);
-      if (!dueMs){
+      if (!dueMs) {
         el.textContent = "جاري...";
         return;
       }
 
-      const tick = ()=>{
+      const tick = () => {
         const left = dueMs - Date.now();
-        if (left <= 0){
+        if (left <= 0) {
           el.textContent = "انتهى الوقت ⛔";
           el.style.color = "#7f1d1d";
         } else {
@@ -330,12 +378,12 @@ async function loadTasks(){
           el.style.color = "#0f172a";
         }
       };
+
       tick();
       const timer = setInterval(tick, 1000);
       timers.push(timer);
     });
-
-  }catch(e){
+  } catch (e) {
     console.error(e);
     tasksList.innerHTML = '<div style="color:#64748b">تعذر تحميل المهام.</div>';
     toast("تعذر تحميل المهام.", "error");
@@ -347,10 +395,10 @@ taskFilter?.addEventListener("change", loadTasks);
 taskSearch?.addEventListener("input", loadTasks);
 
 // Auth
-onAuthStateChanged(auth, (user)=>{
-  if (!user){
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
     toast("لازم تسجّل دخول الأول.", "warn");
-    setTimeout(()=> location.href="register.html", 500);
+    setTimeout(() => (location.href = "register.html"), 500);
     return;
   }
   currentUid = user.uid;
@@ -360,19 +408,24 @@ onAuthStateChanged(auth, (user)=>{
 // ✅ Send proof
 btnSendProof?.addEventListener("click", async () => {
   if (!currentUid) return toast("سجل دخول أولاً.", "warn");
+
   const taskId = (proofTaskSelect?.value || "").trim();
   const file = proofFile?.files?.[0] || null;
+
   if (!taskId) return toast("اختر المهمة.", "warn");
   if (!file) return toast("اختار ملف (صورة أو PDF).", "warn");
 
   const maxMb = 10;
-  if (file.size > maxMb * 1024 * 1024) return toast(`حجم الملف كبير (أقصى ${maxMb}MB).`, "warn");
+  if (file.size > maxMb * 1024 * 1024)
+    return toast(`حجم الملف كبير (أقصى ${maxMb}MB).`, "warn");
 
-  const okType = (file.type || "").startsWith("image/") || file.type === "application/pdf";
+  const okType =
+    (file.type || "").startsWith("image/") || file.type === "application/pdf";
   if (!okType) return toast("الملف لازم يكون صورة أو PDF.", "warn");
 
   if (proofMsg) proofMsg.textContent = "جارٍ رفع الإثبات...";
-  setLoading(true);
+  setLoadingBtn(btnSendProof, true, "جارٍ الرفع...");
+
   try {
     const safeName = String(file.name || "proof").replaceAll(" ", "_");
     const path = `task_proofs/${currentUid}/${taskId}/${Date.now()}_${safeName}`;
@@ -398,10 +451,15 @@ btnSendProof?.addEventListener("click", async () => {
       updatedAt: serverTimestamp(),
     });
 
-    await notifyAdmins("📎 تم تسليم إثبات", `متطوع (${currentUid}) سلّم إثبات لمهمة (${taskId}).`, { taskId });
+    await notifyAdmins(
+      "📎 تم تسليم إثبات",
+      `متطوع (${currentUid}) سلّم إثبات لمهمة (${taskId}).`,
+      { taskId },
+    );
 
     toast("تم إرسال الإثبات ✅", "success");
-    if (proofMsg) proofMsg.textContent = "✅ تم إرسال الإثبات وبانتظار اعتماد الأدمن.";
+    if (proofMsg)
+      proofMsg.textContent = "✅ تم إرسال الإثبات وبانتظار اعتماد الأدمن.";
     if (proofFile) proofFile.value = "";
     await loadTasks();
   } catch (e) {
@@ -409,23 +467,25 @@ btnSendProof?.addEventListener("click", async () => {
     toast("فشل رفع الإثبات.", "error");
     if (proofMsg) proofMsg.textContent = "❌ فشل رفع الإثبات.";
   } finally {
-    setLoading(false);
+    setLoadingBtn(btnSendProof, false);
   }
 });
 
-async function completeTask(id){
-  const ref = doc(db, "tasks", id);
-  const snap = await getDoc(ref);
-  const t = snap.exists() ? (snap.data()||{}) : {};
+async function completeTask(id) {
+  const refDoc = doc(db, "tasks", id);
+  const snap = await getDoc(refDoc);
+  const t = snap.exists() ? snap.data() || {} : {};
   const requireProof = t.requireProof === true;
 
-  if (requireProof){
-    await updateDoc(ref, {
+  if (requireProof) {
+    await updateDoc(refDoc, {
       status: "waiting_proof",
       proofStatus: "required",
       updatedAt: serverTimestamp(),
     });
+
     toast("تم تسجيل الإنجاز ✅ ارفع الإثبات من أسفل الصفحة.", "success");
+
     await addDoc(collection(db, NOTI_COL), {
       uid: currentUid,
       title: "📎 مطلوب إثبات",
@@ -436,10 +496,11 @@ async function completeTask(id){
       createdAt: serverTimestamp(),
       taskId: id,
     });
+
     return;
   }
 
-  await updateDoc(ref, {
+  await updateDoc(refDoc, {
     status: "completed",
     completedAt: serverTimestamp(),
     active: false,

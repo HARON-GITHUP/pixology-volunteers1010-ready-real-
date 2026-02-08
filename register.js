@@ -1,14 +1,6 @@
 import { auth } from "./firebase.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-import { toast, setLoading, throttleAction } from "./ui.js";
-
-// ✅ حماية الصفحة: ممنوع الدخول بدون تسجيل
-onAuthStateChanged(auth, (user) => {
-  if (!user) {
-    toast("لازم تسجل دخول بحساب حقيقي الأول ✅");
-    window.location.replace("index.html");
-  }
-});
+import { toast, throttleAction } from "./ui.js";
 
 import { db } from "./firebase.js";
 import {
@@ -22,8 +14,20 @@ import {
   doc,
   setDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+import { signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
 console.log("REGISTER PROJECT:", db.app.options.projectId);
 
+/** ✅ حماية الصفحة: ممنوع الدخول بدون تسجيل */
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    toast("لازم تسجل دخول بحساب حقيقي الأول ✅");
+    window.location.replace("index.html");
+  }
+});
+
+/** ================== DOM ================== */
 const form = document.getElementById("regForm");
 const msg = document.getElementById("msg");
 const submitBtn = document.getElementById("submitBtn");
@@ -34,17 +38,21 @@ const scPhone = document.getElementById("scPhone");
 
 const photoFileEl = document.getElementById("photoFile");
 
-function setLoading(isLoading) {
-  if (!submitBtn) return;
-  submitBtn.disabled = isLoading;
-  submitBtn.textContent = isLoading ? "جارٍ الإرسال..." : "إرسال الطلب";
-}
+const btnLogout = document.getElementById("btnLogout");
 
+/** ================== Helpers ================== */
 const norm = (v) => String(v ?? "").trim();
 const digitsOnly = (s) => String(s ?? "").replace(/\D/g, "");
 
 function showErr(text) {
   if (msg) msg.textContent = text;
+}
+
+// ✅ setLoading محلي (بدون تعارض مع ui.js)
+function setLoadingBtn(isLoading) {
+  if (!submitBtn) return;
+  submitBtn.disabled = isLoading;
+  submitBtn.textContent = isLoading ? "جارٍ الإرسال..." : "إرسال الطلب";
 }
 
 /** ✅ تحويل الصورة إلى Base64 بعد تصغيرها لتفادي حد Firestore */
@@ -113,12 +121,16 @@ async function checkDuplicateByPhoneKey(phoneKey) {
   return { exists: true, status: found.status || "Pending" };
 }
 
+/** ================== Submit ================== */
 form?.addEventListener("submit", async (e) => {
   e.preventDefault();
 
-  
-  if (!throttleAction("register-submit", 4000)) { toast("استنى ثواني وجرب تاني.", "warn"); return; }
-if (msg) msg.textContent = "";
+  if (!throttleAction("register-submit", 4000)) {
+    toast("استنى ثواني وجرب تاني.", "warn");
+    return;
+  }
+
+  if (msg) msg.textContent = "";
   if (successCard) successCard.style.display = "none";
 
   const name = norm(document.getElementById("name")?.value);
@@ -128,15 +140,12 @@ if (msg) msg.textContent = "";
   const countryRaw = norm(document.getElementById("country")?.value);
   const notes = norm(document.getElementById("notes")?.value);
 
-  // ✅ تنظيف الرقم لأي دولة
   const phoneDigits = digitsOnly(phoneRaw);
 
-  // ✅ country key (عشان اختلاف الكتابة ما يعملش duplicates)
   const countryKey = countryRaw
     ? countryRaw.toLowerCase().replace(/\s+/g, " ").trim()
     : "unknown";
 
-  // ✅ مفتاح عالمي لمنع التكرار
   const phoneKey = `${countryKey}:${phoneDigits}`;
 
   if (!name || !phoneRaw || !gender || !joinedAt) {
@@ -144,17 +153,14 @@ if (msg) msg.textContent = "";
     return;
   }
 
-  // ✅ Validation عالمي (مش مصر)
-  // حد أدنى بسيط لأي دولة: 6 أرقام / حد أقصى: 15 (تقريبًا معيار E.164 للأرقام)
   if (phoneDigits.length < 6 || phoneDigits.length > 15) {
     showErr("❌ رقم الهاتف غير صحيح (اكتب رقم صحيح مع كود الدولة لو متاح)");
     return;
   }
 
-  setLoading(true);
+  setLoadingBtn(true);
 
   try {
-    // ✅ منع التكرار حسب الدولة + الرقم
     const dup = await checkDuplicateByPhoneKey(phoneKey);
     if (dup.exists) {
       if (dup.status === "Approved") {
@@ -173,15 +179,15 @@ if (msg) msg.textContent = "";
     const user = auth.currentUser;
     const uid = user?.uid || "";
     const email = user?.email || "";
-await addDoc(collection(db, "volunteer_requests"), {
+
+    await addDoc(collection(db, "volunteer_requests"), {
       uid,
       email,
       name,
 
-      // ✅ نخزن 3 أشكال
-      phoneRaw, // اللي المستخدم كتبه
-      phoneDigits, // الرقم بعد التنظيف
-      phoneKey, // country+digits (اللي بنمنع بيه التكرار)
+      phoneRaw,
+      phoneDigits,
+      phoneKey,
 
       gender,
       joinedAt,
@@ -199,19 +205,21 @@ await addDoc(collection(db, "volunteer_requests"), {
       createdAt: serverTimestamp(),
     });
 
-
-    // ✅ أنشئ/حدّث ملف المستخدم كـ Pending (لأن القبول عند الأدمن)
+    // ✅ حدّث ملف المستخدم: Pending
     if (uid) {
-      await setDoc(doc(db, "users", uid), {
-        email,
-        displayName: name,
-        role: "pending_volunteer",
-        active: false,
-        pending: true,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
+      await setDoc(
+        doc(db, "users", uid),
+        {
+          email,
+          displayName: name,
+          role: "pending_volunteer",
+          active: false,
+          pending: true,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
     }
-
 
     if (msg)
       msg.textContent =
@@ -223,18 +231,13 @@ await addDoc(collection(db, "volunteer_requests"), {
     form.reset();
   } catch (err) {
     console.error(err);
-
-    // Firestore ممكن يطلب Index بسبب (phoneKey + status in)
-    // لو ظهر لك خطأ فيه رابط "Create index" ابعتهولي وهنثبته
     showErr(err?.message || "❌ حصل خطأ أثناء الإرسال (راجع Console)");
   } finally {
-    setLoading(false);
+    setLoadingBtn(false);
   }
 });
 
-import { signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
-
-const btnLogout = document.getElementById("btnLogout");
+/** ================== Logout ================== */
 btnLogout?.addEventListener("click", async () => {
   await signOut(auth);
   window.location.replace("index.html");

@@ -118,11 +118,46 @@ try{
     <script type="module" src="certificates.js?v=20260207012958"></script>
 
     <script>
-      if ("serviceWorker" in navigator) {
-        window.addEventListener("load", () => {
-          navigator.serviceWorker.register("./sw.js").catch(console.error);
-        });
+  (function () {
+    const isLocal =
+      location.hostname === "localhost" || location.hostname === "127.0.0.1";
+
+    if (!("serviceWorker" in navigator)) return;
+
+    if (isLocal) {
+      // ✅ تطوير: امنع الكاش/الـ SW نهائيًا
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((r) => r.unregister());
+      });
+      if (window.caches && caches.keys) {
+        caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
       }
-    </script>
+      return;
+    }
+
+    // ✅ إنتاج: سجّل الـ SW + حدّث تلقائيًا
+    window.addEventListener("load", () => {
+      navigator.serviceWorker
+        .register("./sw.js")
+        .then((reg) => {
+          reg.addEventListener("updatefound", () => {
+            const newWorker = reg.installing;
+            if (!newWorker) return;
+
+            newWorker.addEventListener("statechange", () => {
+              if (
+                newWorker.state === "installed" &&
+                navigator.serviceWorker.controller
+              ) {
+                newWorker.postMessage({ type: "SKIP_WAITING" });
+                location.reload();
+              }
+            });
+          });
+        })
+        .catch(console.error);
+    });
+  })();
+</script>
   </body>
 </html>
