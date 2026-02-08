@@ -1,11 +1,13 @@
-// my-profile.js (FULL CLEAN VERSION)
+// my-profile.js (FINAL CLEAN — matches my-profile.html cleaned IDs)
 import { auth, db } from "./firebase.js";
 window.authRef = auth;
-import { toast, setLoading, guardAuth, escapeHTML } from "./ui.js";
 
-const esc = (s) => escapeHTML(s || "");
+import { toast, setLoading, guardAuth, throttleAction } from "./ui.js";
 
-guardAuth({ redirectTo: "index.html", message: "سجّل دخول عشان تفتح ملفك الشخصي." });
+guardAuth({
+  redirectTo: "index.html",
+  message: "سجّل دخول عشان تفتح ملفك الشخصي.",
+});
 
 import {
   onAuthStateChanged,
@@ -22,12 +24,17 @@ import {
   where,
   getDocs,
   updateDoc,
+  addDoc,
   serverTimestamp,
+  Timestamp,
+  orderBy,
+  limit,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 const ROLE_KEY = "pix_role";
 
 /** ================== DOM ================== */
+// Profile header
 const pPhoto = document.getElementById("pPhoto");
 const pName = document.getElementById("pName");
 const pEmail = document.getElementById("pEmail");
@@ -40,7 +47,7 @@ const btnResetRole = document.getElementById("btnResetRole");
 const btnLogout = document.getElementById("btnLogout");
 const msg = document.getElementById("msg");
 
-// نقاط + مستوى
+// Points + level
 const pPoints = document.getElementById("pPoints");
 const pLevel = document.getElementById("pLevel");
 const pBar = document.getElementById("pBar");
@@ -49,25 +56,29 @@ const b1 = document.getElementById("b1");
 const b2 = document.getElementById("b2");
 const b3 = document.getElementById("b3");
 
-// الإحصائيات
+// Stats
 const sHours = document.getElementById("sHours");
 const sEvents = document.getElementById("sEvents");
 const sJoin = document.getElementById("sJoin");
 const sUpdate = document.getElementById("sUpdate");
 
-// الإشعارات
-const notifyList = document.getElementById("notifyList");
-
-// التاسكات
-const taskList = document.getElementById("taskList");
-
-// أزرار
+// Buttons
 const btnCopyUid = document.getElementById("btnCopyUid");
 const btnCopyPublic = document.getElementById("btnCopyPublic");
 const btnClearDevice = document.getElementById("btnClearDevice");
 const btnPDF = document.getElementById("btnPDF");
 
-// هنخزن داتا للـ PDF هنا
+// ✅ New Notifications + Tasks (the only system)
+const notifList = document.getElementById("notifList");
+const btnMarkNotifs = document.getElementById("btnMarkNotifs");
+const myTasksList = document.getElementById("myTasksList");
+const btnRefreshMyTasks = document.getElementById("btnRefreshMyTasks");
+
+// Optional cards
+const pointsValue = document.getElementById("pointsValue");
+const rankValue = document.getElementById("rankValue");
+
+// PDF data holder
 let currentUserDataForPdf = null;
 
 /** ================== Auth Helpers ================== */
@@ -85,7 +96,6 @@ function showMsg(text) {
 
 function renderAvatar(user) {
   if (!pPhoto) return;
-
   const photo = user.photoURL || "";
   const name = user.displayName || user.email || "U";
   const letter = (name.trim()[0] || "U").toUpperCase();
@@ -136,7 +146,6 @@ function levelFromPoints(points) {
 
 function renderPointsUI(points) {
   const p = Number(points || 0);
-
   if (pPoints) pPoints.textContent = String(p);
 
   const lv = levelFromPoints(p);
@@ -171,41 +180,6 @@ function renderStatsUI({
   if (sUpdate) sUpdate.textContent = fmtDateAny(updatedAt);
 }
 
-/** ✅ ساعات التطوع fallback (يطابق حقول الأدمن) */
-async function getVolunteerHoursFallback(uidOrVolunteerId) {
-  // 1) volunteerId == X
-  try {
-    const q1 = query(
-      collection(db, "pixology_volunteers"),
-      where("volunteerId", "==", uidOrVolunteerId),
-    );
-    const snap1 = await getDocs(q1);
-    if (!snap1.empty) return Number(snap1.docs[0].data().hours || 0);
-  } catch {}
-
-  // 2) userUid == UID (ده اللي بتخزنه في admin.js)
-  try {
-    const q2 = query(
-      collection(db, "pixology_volunteers"),
-      where("userUid", "==", uidOrVolunteerId),
-    );
-    const snap2 = await getDocs(q2);
-    if (!snap2.empty) return Number(snap2.docs[0].data().hours || 0);
-  } catch {}
-
-  // 3) uid == UID (احتياط)
-  try {
-    const q3 = query(
-      collection(db, "pixology_volunteers"),
-      where("uid", "==", uidOrVolunteerId),
-    );
-    const snap3 = await getDocs(q3);
-    if (!snap3.empty) return Number(snap3.docs[0].data().hours || 0);
-  } catch {}
-
-  return 0;
-}
-
 /** ================== Copy ================== */
 async function copyText(text) {
   try {
@@ -215,7 +189,6 @@ async function copyText(text) {
       return true;
     }
   } catch {}
-
   try {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -316,187 +289,398 @@ function openPrintReport(data) {
   w.document.close();
 }
 
-/** ================== Notifications ==================
-    ✅ لتفادي Index: نجيب آخر 30 إشعار بدون orderBy+where مع بعض
-*/
-async function loadNotifications(uid) {
-  if (!notifyList) return;
+/* =========================
+   NOTIFICATIONS (New)
+   notifications fields in your project: { uid, title, message/text, read, createdAt }
+========================= */
 
-  notifyList.innerHTML = `<p class="muted">جاري تحميل الإشعارات...</p>`;
+async function loadNotifications(uid) {
+  if (!notifList) return;
+  notifList.innerHTML = '<div style="color:#64748b">تحميل...</div>';
 
   try {
-    const qy = query(collection(db, "notifications"), where("assignedTo","==",uid));
+    const qy = query(
+      collection(db, "notifications"),
+      where("uid", "==", uid),
+      orderBy("createdAt", "desc"),
+      limit(12),
+    );
+
     const snap = await getDocs(qy);
 
-    if (snap.empty) {
-      notifyList.innerHTML = `<p class="muted">لا يوجد إشعارات</p>`;
+    if (!snap.size) {
+      notifList.innerHTML = '<div style="color:#64748b">لا يوجد إشعارات.</div>';
       return;
     }
 
-    // رتب محليًا حسب createdAt
-    const docs = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => {
-        const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-        const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-        return tb - ta;
-      })
-      .slice(0, 30);
-
-    // ✅ علّم غير المقروء كمقروء
-    const unread = docs.filter((d) => d.read === false);
-    for (const n of unread) {
-      try {
-        await updateDoc(doc(db, "notifications", n.id), {
-          read: true,
-          readAt: serverTimestamp(),
-        });
-      } catch {}
-    }
-
-    notifyList.innerHTML = docs
-      .map((n) => {
-        const icon =
-          n.type === "success" ? "✅" : n.type === "warning" ? "⚠️" : "ℹ️";
+    notifList.innerHTML = snap.docs
+      .map((d) => {
+        const n = d.data() || {};
+        const seen = n.read === true;
         const title = n.title || "إشعار";
-        const message = n.message || "";
-        const time = fmtDateAny(n.createdAt);
-
+        const body = n.message || n.text || "";
+        const t = n.createdAt?.toDate
+          ? n.createdAt.toDate().toLocaleString("ar-EG")
+          : "";
         return `
-          <div style="padding:12px; border-radius:14px; border:1px solid var(--border); background:var(--card);">
-            <div style="font-weight:900">${icon} ${esc(title)}</div>
-            <div class="muted" style="margin-top:4px">${esc(message)}</div>
-            <div class="muted" style="margin-top:6px; font-size: 12px">${time}</div>
-          </div>
+          <article class="card" style="padding:14px;border-radius:16px; border: ${
+            seen
+              ? "1px solid rgba(148,163,184,.35)"
+              : "2px solid rgba(245,158,11,.45)"
+          }">
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+              <div style="font-weight:800">${seen ? "📩" : "🔔"} ${title}</div>
+              <button class="btn" type="button" data-notif-seen="${d.id}">${seen ? "مقروء" : "تحديد كمقروء"}</button>
+            </div>
+            <div style="margin-top:8px;line-height:1.9;color:#334155">${body}</div>
+            <div style="margin-top:8px;color:#64748b;font-size:12px">${t}</div>
+          </article>
         `;
       })
       .join("");
+
+    notifList.querySelectorAll("[data-notif-seen]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-notif-seen");
+        if (!id) return;
+        try {
+          await updateDoc(doc(db, "notifications", id), {
+            read: true,
+            readAt: serverTimestamp(),
+          });
+          loadNotifications(uid);
+        } catch (e) {
+          console.error(e);
+          toast("تعذر تحديث الإشعار.", "error");
+        }
+      });
+    });
   } catch (e) {
-    console.log(e);
-    notifyList.innerHTML = `<p class="muted">حدث خطأ في تحميل الإشعارات</p>`;
+    console.error(e);
+    notifList.innerHTML =
+      '<div style="color:#64748b">تعذر تحميل الإشعارات.</div>';
   }
 }
 
-/** ================== Tasks ==================
-    ✅ لتفادي Index: نجيب tasks بـ where فقط ونرتب محليًا
-*/
-function renderTasks(tasks) {
-  if (!taskList) return;
-
-  if (!tasks.length) {
-    taskList.innerHTML = `<p class="muted">لا توجد تاسكات</p>`;
-    return;
-  }
-
-  taskList.innerHTML = tasks
-    .map((t) => {
-      const pr =
-        t.priority === "high"
-          ? "🔥 عالية"
-          : t.priority === "low"
-          ? "هادية"
-          : "عادية";
-
-      const st = t.status === "done" ? "✅ تم" : "⏳ مفتوحة";
-      const seen = t.seen ? `👁️ اتشاف: ${fmtDateAny(t.readAt)}` : "🔴 جديدة";
-      const created = fmtDateAny(t.createdAt);
-      const due = t.dueAt ? `📅 موعد: ${fmtDateAny(t.dueAt)}` : "";
-
-      return `
-        <div style="padding:12px; border-radius:14px; border:1px solid var(--border); background:var(--card);">
-          <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-            <div style="font-weight:900">🧩 ${t.title || "Task"}</div>
-            <div class="muted" style="font-size:12px">${pr} • ${st}</div>
-          </div>
-
-          ${t.details ? `<div class="muted" style="margin-top:6px">${t.details}</div>` : ""}
-
-          <div class="muted" style="margin-top:8px; font-size:12px">
-            ${seen} • 🕒 ${created} ${due ? ` • ${due}` : ""}
-          </div>
-
-          <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
-            ${
-              t.status !== "done"
-                ? `<button class="btn btn--outline" data-action="doneTask" data-id="${t.id}">تم التنفيذ</button>`
-                : ""
-            }
-          </div>
-        </div>
-      `;
-    })
-    .join("");
-}
-
-async function loadTasksAndMarkSeen(uid) {
-  if (!taskList) return;
-
-  taskList.innerHTML = `<p class="muted">جاري تحميل التاسكات...</p>`;
+btnMarkNotifs?.addEventListener("click", async () => {
+  if (!auth.currentUser) return;
+  const uid = auth.currentUser.uid;
 
   try {
-    const qy = query(collection(db, "tasks"), where("assignedTo", "==", uid));
+    const qy = query(
+      collection(db, "notifications"),
+      where("uid", "==", uid),
+      where("read", "==", false),
+      limit(50),
+    );
     const snap = await getDocs(qy);
 
-    if (snap.empty) {
-      taskList.innerHTML = `<p class="muted">لا توجد تاسكات</p>`;
+    await Promise.all(
+      snap.docs.map((d) =>
+        updateDoc(doc(db, "notifications", d.id), {
+          read: true,
+          readAt: serverTimestamp(),
+        }),
+      ),
+    );
+
+    toast("تم تحديد الكل كمقروء ✅", "success");
+    loadNotifications(uid);
+  } catch (e) {
+    console.error(e);
+    toast("تعذر تحديد الكل كمقروء.", "error");
+  }
+});
+
+/* =========================
+   TASKS (New)
+   tasks fields (from assign-task.js): { assignedTo, title, details, durationHours, points, requireProof, status, assignedAt, acceptedAt, dueAt, completedAt }
+========================= */
+
+let _taskTimers = [];
+
+function clearTaskTimers() {
+  _taskTimers.forEach((t) => clearInterval(t));
+  _taskTimers = [];
+}
+
+function tsToMs(ts) {
+  try {
+    if (!ts) return null;
+    if (typeof ts.toMillis === "function") return ts.toMillis();
+    if (ts.seconds)
+      return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+  } catch {}
+  return null;
+}
+
+function fmtRemaining(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${h}س ${m}د ${sec}ث`;
+}
+
+function taskStatusText(st) {
+  const s = String(st || "pending");
+  if (s === "accepted") return "✅ جارية";
+  if (s === "completed") return "🏁 مكتملة";
+  if (s === "expired") return "⛔ انتهت";
+  return "⏳ معلّقة";
+}
+
+async function loadMyTasks(uid) {
+  if (!myTasksList) return;
+  myTasksList.innerHTML = '<div style="color:#64748b">تحميل...</div>';
+  clearTaskTimers();
+
+  try {
+    const qy = query(
+      collection(db, "tasks"),
+      where("assignedTo", "==", uid),
+      orderBy("assignedAt", "desc"),
+      limit(20),
+    );
+    const snap = await getDocs(qy);
+
+    if (!snap.size) {
+      myTasksList.innerHTML = '<div style="color:#64748b">لا يوجد مهام.</div>';
       return;
     }
 
-    // رتب محليًا
-    const tasks = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => {
-        const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-        const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-        return tb - ta;
+    myTasksList.innerHTML = snap.docs
+      .map((d) => {
+        const t = d.data() || {};
+        const st = String(t.status || "pending");
+        const dur = Number(t.durationHours || 0);
+        const details = t.details || ""; // ✅ correct field from assign-task.js
+        const reqProof = t.requireProof === true;
+
+        return `
+          <article class="card" style="padding:14px;border-radius:16px">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+              <div style="font-weight:900">${t.title || "مهمة"}</div>
+              <div style="color:#64748b;font-size:13px">${taskStatusText(st)}</div>
+            </div>
+
+            ${details ? `<div style="margin-top:8px;line-height:1.9;color:#334155">${details}</div>` : ""}
+
+            <div style="margin-top:8px;color:#64748b;line-height:1.9">
+              المدة: <b>${dur}</b> ساعة • نقاط: <b>${Number(t.points || 0)}</b>
+              ${
+                reqProof
+                  ? `<div style="margin-top:6px;color:#b45309;font-weight:800">⚠️ مطلوب إثبات (صورة/PDF)</div>`
+                  : ""
+              }
+              <div id="timer-${d.id}" style="margin-top:6px; font-weight:800"></div>
+            </div>
+
+            <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap">
+              ${
+                st === "pending"
+                  ? `<button class="btn btn--solid" data-accept="${d.id}" type="button">موافقة وبدء العداد</button>`
+                  : ""
+              }
+              ${
+                st === "accepted"
+                  ? `<button class="btn btn--solid" data-complete="${d.id}" type="button">${
+                      reqProof ? "رفع إثبات" : "تم التنفيذ ✅"
+                    }</button>`
+                  : ""
+              }
+            </div>
+          </article>
+        `;
       })
-      .slice(0, 30);
+      .join("");
 
-    // ✅ علّم غير المتشاف Seen
-    const unseen = tasks.filter((t) => t.seen === false);
-    for (const t of unseen) {
-      try {
-        await updateDoc(doc(db, "tasks", t.id), {
-          read: true,
-          readAt: serverTimestamp(),
-        });
-        t.seen = true;
-        t.readAt = { toDate: () => new Date() };
-      } catch {}
-    }
+    // Accept
+    myTasksList.querySelectorAll("[data-accept]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-accept");
+        if (!id) return;
+        if (!throttleAction("accept-" + id, 2000)) return;
 
-    renderTasks(tasks);
+        setLoading(true);
+        try {
+          const ref = doc(db, "tasks", id);
+          const tSnap = await getDoc(ref);
+          const t = tSnap.exists() ? tSnap.data() || {} : {};
+          const hours = Number(t.durationHours || 0);
+
+          const due = Timestamp.fromMillis(
+            Date.now() + Math.max(1, hours) * 3600 * 1000,
+          );
+
+          await updateDoc(ref, {
+            status: "accepted",
+            acceptedAt: serverTimestamp(),
+            dueAt: due,
+          });
+
+          await addDoc(collection(db, "notifications"), {
+            uid,
+            title: "تم قبول المهمة ✅",
+            message: `تم قبول مهمة: ${t.title || "مهمة"} — الوقت بدأ الآن.`,
+            read: false,
+            readAt: null,
+            createdAt: serverTimestamp(),
+            taskId: id,
+            type: "task_accepted",
+          });
+
+          toast("تم بدء المهمة ✅", "success");
+          loadMyTasks(uid);
+        } catch (e) {
+          console.error(e);
+          toast("تعذر قبول المهمة.", "error");
+        } finally {
+          setLoading(false);
+        }
+      });
+    });
+
+    // Complete / Proof
+    myTasksList.querySelectorAll("[data-complete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-complete");
+        if (!id) return;
+        if (!throttleAction("complete-" + id, 2000)) return;
+
+        setLoading(true);
+        try {
+          const ref = doc(db, "tasks", id);
+          const tSnap = await getDoc(ref);
+          const t = tSnap.exists() ? tSnap.data() || {} : {};
+          const reqProof = t.requireProof === true;
+
+          // لو عندك صفحة رفع إثبات فعلًا
+          if (reqProof) {
+            // لو الصفحة مش موجودة عندك، ابعتلي وهنعملها
+            location.href = `submit-proof.html?task=${encodeURIComponent(id)}`;
+            return;
+          }
+
+          await updateDoc(ref, {
+            status: "completed",
+            completedAt: serverTimestamp(),
+            active: false,
+          });
+
+          await addDoc(collection(db, "notifications"), {
+            uid,
+            title: "🏁 تم إنهاء المهمة",
+            message: "تم إنهاء المهمة بنجاح.",
+            read: false,
+            readAt: null,
+            createdAt: serverTimestamp(),
+            taskId: id,
+            type: "task_completed",
+          });
+
+          toast("تم إنهاء المهمة ✅", "success");
+          loadMyTasks(uid);
+        } catch (e) {
+          console.error(e);
+          toast("تعذر إنهاء المهمة.", "error");
+        } finally {
+          setLoading(false);
+        }
+      });
+    });
+
+    // Timers
+    snap.docs.forEach((d) => {
+      const t = d.data() || {};
+      const st = String(t.status || "pending");
+      const el = document.getElementById("timer-" + d.id);
+      if (!el) return;
+
+      if (st === "pending") {
+        el.textContent = "ابدأ بالضغط على (موافقة) لبدء الوقت.";
+        el.style.color = "#b45309";
+        return;
+      }
+      if (st === "completed") {
+        el.textContent = "مكتملة ✅";
+        el.style.color = "#065f46";
+        return;
+      }
+      if (st === "expired") {
+        el.textContent = "انتهت ⛔";
+        el.style.color = "#7f1d1d";
+        return;
+      }
+
+      const dueMs = tsToMs(t.dueAt);
+      if (!dueMs) {
+        el.textContent = "جاري...";
+        return;
+      }
+
+      const tick = () => {
+        const left = dueMs - Date.now();
+        if (left <= 0) {
+          el.textContent = "انتهى الوقت ⛔";
+          el.style.color = "#7f1d1d";
+        } else {
+          el.textContent = "الوقت المتبقي: " + fmtRemaining(left);
+          el.style.color = "#0f172a";
+        }
+      };
+
+      tick();
+      const timer = setInterval(tick, 1000);
+      _taskTimers.push(timer);
+    });
   } catch (e) {
-    console.log(e);
-    taskList.innerHTML = `<p class="muted">حدث خطأ في تحميل التاسكات</p>`;
+    console.error(e);
+    myTasksList.innerHTML =
+      '<div style="color:#64748b">تعذر تحميل المهام.</div>';
   }
 }
 
-taskList?.addEventListener("click", async (e) => {
-  const btn = e.target?.closest?.("button[data-action='doneTask']");
-  if (!btn) return;
-
-  const id = btn.dataset.id;
-  if (!id) return;
-
-  btn.disabled = true;
-  btn.textContent = "جارٍ...";
-
-  try {
-    await updateDoc(doc(db, "tasks", id), {
-      status: "done",
-      doneAt: serverTimestamp(),
-    });
-
-    if (auth.currentUser) await loadTasksAndMarkSeen(auth.currentUser.uid);
-  } catch (err) {
-    console.log(err);
-    toast("فشل تحديث التاسك");
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "تم التنفيذ";
-  }
+btnRefreshMyTasks?.addEventListener("click", () => {
+  if (auth.currentUser) loadMyTasks(auth.currentUser.uid);
 });
+
+/** ================== Rank/Points small widgets ================== */
+async function loadPointsAndRank(uid) {
+  try {
+    const qy = query(
+      collection(db, "pixology_volunteers"),
+      where("userUid", "==", uid),
+      limit(1),
+    );
+    const snap = await getDocs(qy);
+    const v = !snap.empty ? snap.docs[0].data() || {} : {};
+    const myPoints = Number(v.points || 0);
+    if (pointsValue) pointsValue.textContent = String(myPoints);
+
+    // Best-effort rank (may require index/rules)
+    try {
+      const topQ = query(
+        collection(db, "pixology_volunteers"),
+        orderBy("points", "desc"),
+        limit(200),
+      );
+      const topSnap = await getDocs(topQ);
+      let rank = 1;
+      for (const d of topSnap.docs) {
+        const data = d.data() || {};
+        if ((data.userUid || "") === uid) break;
+        rank++;
+      }
+      if (rankValue) rankValue.textContent = topSnap.size ? "#" + rank : "—";
+    } catch {
+      if (rankValue) rankValue.textContent = "—";
+    }
+  } catch {
+    if (pointsValue) pointsValue.textContent = "—";
+    if (rankValue) rankValue.textContent = "—";
+  }
+}
 
 /** ================== Main ================== */
 onAuthStateChanged(auth, async (user) => {
@@ -513,30 +697,39 @@ onAuthStateChanged(auth, async (user) => {
     if (pUid) pUid.textContent = user.uid || "—";
 
     const last = user.metadata?.lastSignInTime;
-    if (pLast) pLast.textContent = last ? new Date(last).toLocaleString("ar-EG") : "—";
+    if (pLast)
+      pLast.textContent = last ? new Date(last).toLocaleString("ar-EG") : "—";
 
     if (btnLogout) btnLogout.style.display = "inline-flex";
 
-    // ✅ إشعارات + تاسكات
+    // ✅ Load Notifications/Tasks (NEW)
     loadNotifications(user.uid);
-    loadTasksAndMarkSeen(user.uid);
+    loadMyTasks(user.uid);
+    loadPointsAndRank(user.uid);
 
     // Firestore user doc
     const uref = doc(db, "users", user.uid);
     const usnap = await getDoc(uref);
 
     if (!usnap.exists()) {
-      showMsg("ملاحظة: لم يتم العثور على ملفك في قاعدة البيانات. افتح الصفحة الرئيسية واختر (متطوع/مؤسسة) مرة واحدة.");
+      showMsg(
+        "ملاحظة: لم يتم العثور على ملفك في قاعدة البيانات. افتح الصفحة الرئيسية واختر (متطوع/مؤسسة) مرة واحدة.",
+      );
       if (pRole) pRole.textContent = "—";
       if (pActive) pActive.textContent = "—";
       renderPointsUI(0);
-      renderStatsUI({ hours: 0, eventsCount: 0, createdAt: null, updatedAt: null });
+      renderStatsUI({
+        hours: 0,
+        eventsCount: 0,
+        createdAt: null,
+        updatedAt: null,
+      });
       if (btnResetRole) btnResetRole.style.display = "inline-flex";
       return;
     }
 
     const u = usnap.data() || {};
-    const role = u.role || "";
+    const role = String(u.role || "");
     const active = u.active === true;
 
     if (pRole) pRole.textContent = roleLabel(role);
@@ -544,7 +737,7 @@ onAuthStateChanged(auth, async (user) => {
 
     if (role) localStorage.setItem(ROLE_KEY, role);
 
-    // رابط الملف العام
+    // Public link
     let publicUrl = "";
     if (role === "volunteer") {
       const vid = u.volunteerId || user.uid;
@@ -561,7 +754,11 @@ onAuthStateChanged(auth, async (user) => {
         pPublicLink.style.display = "inline-flex";
         pPublicLink.textContent = "فتح صفحة المؤسسة";
       }
-    } else if (role === "admin" || role === "super_admin" || role === "superadmin") {
+    } else if (
+      role === "admin" ||
+      role === "super_admin" ||
+      role === "superadmin"
+    ) {
       if (pPublicLink) {
         pPublicLink.href = "admin.html";
         pPublicLink.style.display = "inline-flex";
@@ -571,33 +768,51 @@ onAuthStateChanged(auth, async (user) => {
       if (pPublicLink) pPublicLink.style.display = "none";
     }
 
-    if (btnCopyPublic) btnCopyPublic.style.display = publicUrl ? "inline-flex" : "none";
+    if (btnCopyPublic)
+      btnCopyPublic.style.display = publicUrl ? "inline-flex" : "none";
 
-    // نقاط
+    // Points
     let points = u.points;
-    if (points == null) {
-      const hours0 = Number(u.hours || 0);
-      points = hours0 * 5;
-    }
+    if (points == null) points = Number(u.hours || 0) * 5;
     renderPointsUI(points);
 
-    // إحصائيات
+    // ✅ Stats
     let hours = Number(u.hours || 0);
-    const eventsCount = Number(u.eventsCount || 0);
 
-    if (role === "volunteer" && u.hours == null) {
-      hours = await getVolunteerHoursFallback(user.uid);
+    // ✅ eventsCount: خليه رقم مؤكد (ممنوع undefined)
+    let eventsCount = Number(u.tasksCompleted ?? u.eventsCount ?? 0);
+    if (!Number.isFinite(eventsCount)) eventsCount = 0;
+
+    // If volunteer, optionally read volunteer doc as source of truth
+    if (role === "volunteer") {
+      try {
+        const qv = query(
+          collection(db, "pixology_volunteers"),
+          where("userUid", "==", user.uid),
+          limit(1),
+        );
+        const vs = await getDocs(qv);
+        if (!vs.empty) {
+          const v = vs.docs[0].data() || {};
+          hours = Number(v.hours ?? hours ?? 0);
+
+          const ev = Number(
+            v.tasksCompleted ?? v.eventsCount ?? eventsCount ?? 0,
+          );
+          eventsCount = Number.isFinite(ev) ? ev : eventsCount;
+        }
+      } catch {}
     }
 
     const createdAt = u.createdAt || null;
     const updatedAt = u.updatedAt || null;
     renderStatsUI({ hours, eventsCount, createdAt, updatedAt });
 
-    // تجهيز PDF
+    // PDF data
     currentUserDataForPdf = {
       name: user.displayName || "",
       email: user.email || "",
-      assignedTo: user.uid || "",
+      uid: user.uid || "",
       roleText: roleLabel(role),
       activeText: active ? "مفعل ✅" : "غير مفعل ⛔",
       points: Number(points || 0),
@@ -611,17 +826,28 @@ onAuthStateChanged(auth, async (user) => {
 
     if (btnResetRole) btnResetRole.style.display = "inline-flex";
   } catch (e) {
-    console.log(e);
+    console.error(e);
     showMsg("حصل خطأ أثناء تحميل الملف الشخصي. جرّب تحديث الصفحة.");
     renderPointsUI(0);
-    renderStatsUI({ hours: 0, eventsCount: 0, createdAt: null, updatedAt: null });
-    if (notifyList) notifyList.innerHTML = `<p class="muted">حدث خطأ في تحميل الإشعارات</p>`;
-    if (taskList) taskList.innerHTML = `<p class="muted">حدث خطأ في تحميل التاسكات</p>`;
+    renderStatsUI({
+      hours: 0,
+      eventsCount: 0,
+      createdAt: null,
+      updatedAt: null,
+    });
+    if (notifList)
+      notifList.innerHTML =
+        '<div style="color:#64748b">حدث خطأ في تحميل الإشعارات</div>';
+    if (myTasksList)
+      myTasksList.innerHTML =
+        '<div style="color:#64748b">حدث خطأ في تحميل المهام</div>';
   }
 });
 
 /** ================== Buttons ================== */
 btnLogout?.addEventListener("click", async () => {
+  const ok = confirm("هل انت متأكد من تسجيل خروجك من صفحتنا!!!");
+  if (!ok) return;
   try {
     await signOut(auth);
     toast("تم تسجيل الخروج ✅");
@@ -660,324 +886,3 @@ btnPDF?.addEventListener("click", () => {
   }
   openPrintReport(currentUserDataForPdf);
 });
-
-
-/* =========================
-   NOTIFICATIONS + TASKS (Volunteer)
-========================= */
-const notifList = document.getElementById("notifList");
-const btnMarkNotifs = document.getElementById("btnMarkNotifs");
-const myTasksList = document.getElementById("myTasksList");
-const btnRefreshMyTasks = document.getElementById("btnRefreshMyTasks");
-
-function tsToMs(ts){
-  try{
-    if (!ts) return null;
-    if (typeof ts.toMillis === "function") return ts.toMillis();
-    if (ts.seconds) return (ts.seconds*1000) + Math.floor((ts.nanoseconds||0)/1e6);
-  }catch(e){}
-  return null;
-}
-
-function fmtRemaining(ms){
-  const s = Math.max(0, Math.floor(ms/1000));
-  const h = Math.floor(s/3600);
-  const m = Math.floor((s%3600)/60);
-  const sec = s%60;
-  return `${h}س ${m}د ${sec}ث`;
-}
-
-async function loadNotifications(uid){
-  if (!notifList) return;
-  notifList.innerHTML = '<div style="color:#64748b">تحميل...</div>';
-
-  try{
-    const qy = query(collection(db, "notifications"), where("assignedTo","==",uid), orderBy("createdAt","desc"), limit(12));
-    const snap = await getDocs(qy);
-
-    if (!snap.size){
-      notifList.innerHTML = '<div style="color:#64748b">لا يوجد إشعارات.</div>';
-      return;
-    }
-
-    notifList.innerHTML = snap.docs.map(d=>{
-      const n = d.data() || {};
-      const seen = !!(n.read ?? n.seen);
-      return `
-        <article class="card" style="padding:14px;border-radius:16px; border: ${seen ? "1px solid rgba(148,163,184,.35)" : "2px solid rgba(245,158,11,.45)"}">
-          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
-            <div style="font-weight:800">${seen ? "📩" : "🔔"} إشعار</div>
-            <button class="btn" type="button" data-notif-seen="${d.id}">${seen ? "مقروء" : "تحديد كمقروء"}</button>
-          </div>
-          <div style="margin-top:8px;line-height:1.9;color:#334155">${(n.title ? ("<b>"+n.title+"</b><br/>") : "") + (n.message || n.text || "")}</div>
-        </article>
-      `;
-    }).join("");
-
-    notifList.querySelectorAll("[data-notif-seen]").forEach(btn=>{
-      btn.addEventListener("click", async ()=>{
-        const id = btn.getAttribute("data-notif-seen");
-        try{
-          await updateDoc(doc(db,"notifications",id), { read:true });
-          loadNotifications(uid);
-        }catch(e){
-          console.error(e);
-          toast("تعذر تحديث الإشعار.", "error");
-        }
-      });
-    });
-
-  }catch(e){
-    console.error(e);
-    notifList.innerHTML = '<div style="color:#64748b">تعذر تحميل الإشعارات.</div>';
-  }
-}
-
-btnMarkNotifs?.addEventListener("click", async ()=>{
-  if (!auth.currentUser) return;
-  const uid = auth.currentUser.uid;
-  try{
-    const qy = query(collection(db, "notifications"), where("assignedTo","==",uid), where("read","==",false));
-    const snap = await getDocs(qy);
-    const promises = snap.docs.map(d=> updateDoc(doc(db,"notifications",d.id), { read:true }));
-    await Promise.all(promises);
-    toast("تم تحديد الكل كمقروء ✅", "success");
-    loadNotifications(uid);
-  }catch(e){
-    console.error(e);
-    toast("تعذر تحديد الكل كمقروء.", "error");
-  }
-});
-
-let _taskTimers = [];
-
-function clearTaskTimers(){
-  _taskTimers.forEach(t=> clearInterval(t));
-  _taskTimers = [];
-}
-
-async function loadMyTasks(uid){
-  if (!myTasksList) return;
-  myTasksList.innerHTML = '<div style="color:#64748b">تحميل...</div>';
-  clearTaskTimers();
-
-  try{
-    const qy = query(collection(db, "tasks"), where("assignedTo","==",uid), orderBy("assignedAt","desc"), limit(20));
-    const snap = await getDocs(qy);
-
-    if (!snap.size){
-      myTasksList.innerHTML = '<div style="color:#64748b">لا يوجد مهام.</div>';
-      return;
-    }
-
-    myTasksList.innerHTML = snap.docs.map(d=>{
-      const t = d.data() || {};
-      const st = String(t.status || "pending");
-      const st2 = (st === "open") ? "pending" : st;
-      const dur = Number(t.durationHours || 0);
-      return `
-        <article class="card" style="padding:14px;border-radius:16px">
-          <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
-            <div style="font-weight:900">${t.title || "مهمة"}</div>
-            <div style="color:#64748b;font-size:13px">${st2 === "pending" ? "⏳ معلّقة" : st2 === "accepted" ? "✅ جارية" : st2 === "completed" ? "🏁 مكتملة" : "⛔ انتهت"}</div>
-          </div>
-          ${t.details ? `<div style="margin-top:8px;line-height:1.9;color:#334155">${t.details}</div>` : ""}
-          <div style="margin-top:8px;color:#64748b;line-height:1.9">
-            المدة: <b>${dur}</b> ساعة
-            <div id="timer-${d.id}" style="margin-top:6px; font-weight:800"></div>
-          </div>
-
-          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap">
-            ${st2 === "pending" ? `<button class="btn btn--solid" data-accept="${d.id}" type="button">موافقة وبدء العداد</button>` : ""}
-            ${st2 === "accepted" ? `<button class="btn btn--solid" data-complete="${d.id}" type="button">تم التنفيذ ✅</button>` : ""}
-          </div>
-        </article>
-      `;
-    }).join("");
-
-    // Accept
-    myTasksList.querySelectorAll("[data-accept]").forEach(btn=>{
-      btn.addEventListener("click", async ()=>{
-        const id = btn.getAttribute("data-accept");
-        if (!id) return;
-        if (!throttleAction("accept-"+id, 2000)) return;
-        setLoading(true);
-        try{
-          const ref = doc(db,"tasks",id);
-          // Read doc to compute dueAt
-          const tSnap = await getDoc(ref);
-          const t = tSnap.data() || {};
-          const hours = Number(t.durationHours || 0);
-          const due = Timestamp.fromMillis(Date.now() + Math.max(1,hours)*3600*1000);
-          await updateDoc(ref, { status:"accepted", acceptedAt: serverTimestamp(), dueAt: due });
-
-          // notification to volunteer (confirmation)
-          await addDoc(collection(db,"notifications"), {
-            uid,
-            text: `✅ تم قبول المهمة: ${t.title || "مهمة"} — الوقت بدأ الآن.`,
-            read:false,
-            createdAt: serverTimestamp(),
-            taskId: id,
-            type:"task_accepted",
-          });
-
-          await notifyAdmins("✅ متطوع قبل مهمة", `المتطوع ${uid} قبل مهمة: ${(t.title || "مهمة")}`);
-          toast("تم بدء المهمة ✅", "success");
-          loadMyTasks(uid);
-        }catch(e){
-          console.error(e);
-          toast("تعذر قبول المهمة.", "error");
-        }finally{
-          setLoading(false);
-        }
-      });
-    });
-
-    // Complete
-    myTasksList.querySelectorAll("[data-complete]").forEach(btn=>{
-      btn.addEventListener("click", async ()=>{
-        const id = btn.getAttribute("data-complete");
-        if (!id) return;
-        if (!throttleAction("complete-"+id, 2000)) return;
-        setLoading(true);
-        try{
-          const ref = doc(db,"tasks",id);
-          await updateDoc(ref, { status:"completed", completedAt: serverTimestamp(), active:false });
-
-          await addDoc(collection(db,"notifications"), {
-            uid,
-            text: `🏁 تم إنهاء المهمة بنجاح.`,
-            read:false,
-            createdAt: serverTimestamp(),
-            taskId: id,
-            type:"task_completed",
-          });
-
-          await notifyAdmins("🏁 مهمة اكتملت", `المتطوع ${uid} أنهى مهمة.`);
-          toast("تم إنهاء المهمة ✅", "success");
-          loadMyTasks(uid);
-        }catch(e){
-          console.error(e);
-          toast("تعذر إنهاء المهمة.", "error");
-        }finally{
-          setLoading(false);
-        }
-      });
-    });
-
-    // Timers
-    snap.docs.forEach(d=>{
-      const t = d.data() || {};
-      const st = String(t.status || "pending");
-      const st2 = (st === "open") ? "pending" : st;
-      const el = document.getElementById("timer-"+d.id);
-      if (!el) return;
-
-      if (st2 === "pending") {
-        el.textContent = "ابدأ بالضغط على (موافقة) لبدء الوقت.";
-        el.style.color = "#b45309";
-        return;
-      }
-      if (st2 === "completed") {
-        el.textContent = "مكتملة ✅";
-        el.style.color = "#065f46";
-        return;
-      }
-      if (st2 === "expired") {
-        el.textContent = "انتهت ⛔";
-        el.style.color = "#7f1d1d";
-        return;
-      }
-
-      const dueMs = tsToMs(t.dueAt);
-      if (!dueMs){
-        el.textContent = "جاري...";
-        return;
-      }
-
-      const tick = ()=>{
-        const now = Date.now();
-        const left = dueMs - now;
-        if (left <= 0){
-          el.textContent = "انتهى الوقت ⛔";
-          el.style.color = "#7f1d1d";
-        } else {
-          el.textContent = "الوقت المتبقي: " + fmtRemaining(left);
-          el.style.color = "#0f172a";
-        }
-      };
-      tick();
-      const timer = setInterval(tick, 1000);
-      _taskTimers.push(timer);
-    });
-
-  }catch(e){
-    console.error(e);
-    myTasksList.innerHTML = '<div style="color:#64748b">تعذر تحميل المهام.</div>';
-  }
-}
-
-btnRefreshMyTasks?.addEventListener("click", ()=>{
-  if (auth.currentUser) loadMyTasks(auth.currentUser.uid);
-});
-
-// Hook into existing auth init: after onAuthStateChanged sets user, call loads
-// We'll patch by calling from onAuthStateChanged handler if possible.
-
-
-async function notifyAdmins(title, message){
-  try{
-    // send to all admins found in users collection
-    const qy = query(collection(db, "users"), where("role","in",["admin","superadmin","super_admin","superAdmin"]), where("active","==",true));
-    const snap = await getDocs(qy);
-    const admins = snap.docs.map(d=>({uid:d.id, ...(d.data()||{})})).filter(a=>a.uid);
-    await Promise.all(admins.map(a => addDoc(collection(db,"notifications"), {
-      uid: a.uid,
-      title: title || "تحديث مهام",
-      message: message || "",
-      type: "admin_task_update",
-      read: false,
-      readAt: null,
-      createdAt: serverTimestamp(),
-    })));
-  }catch(e){
-    console.log("notifyAdmins err", e);
-  }
-}
-
-
-const pointsValue = document.getElementById('pointsValue');
-const rankValue = document.getElementById('rankValue');
-
-
-async function loadPointsAndRank(uid){
-  try{
-    // Find volunteer doc linked to this user
-    const qy = query(collection(db, "pixology_volunteers"), where("userUid","==",uid));
-    const snap = await getDocs(qy);
-    const docSnap = snap.docs[0];
-    const v = docSnap ? (docSnap.data()||{}) : {};
-    const myPoints = Number(v.points || 0);
-    if (pointsValue) pointsValue.textContent = String(myPoints);
-
-    // Rank: compute among Active/Certified volunteers (rules safe via existing filters on public pages; here user is signed in and reading only own doc? Actually rules allow read only Active/Certified on resource, so ranking may fail if user not Active.
-    // We'll best-effort: load top volunteers by points from public list; if denied, show —
-    try{
-      const topQ = query(collection(db,"pixology_volunteers"), where("status","in",["Active","Certified"]), orderBy("points","desc"), limit(200));
-      const topSnap = await getDocs(topQ);
-      let rank = 1;
-      for (const d of topSnap.docs){
-        const data = d.data()||{};
-        if ((data.userUid||"") === uid){ break; }
-        rank++;
-      }
-      if (rankValue) rankValue.textContent = topSnap.size ? ("#" + rank) : "—";
-    }catch(e){
-      if (rankValue) rankValue.textContent = "—";
-    }
-  }catch(e){
-    console.log("loadPointsAndRank", e);
-    if (pointsValue) pointsValue.textContent = "—";
-    if (rankValue) rankValue.textContent = "—";
-  }
-}

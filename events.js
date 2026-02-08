@@ -1,9 +1,7 @@
 import { auth, db } from "./firebase.js";
-import { toast, setLoading, escapeHTML } from "./ui.js";
+import { toast, setLoading } from "./ui.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import { collection, query, orderBy, limit, getDocs, addDoc, doc, getDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-
-const esc = (s) => escapeHTML(s || "");
 
 const EVENTS_COL="events";
 const REG_COL="event_registrations";
@@ -39,11 +37,11 @@ async function loadEvents(){
     if(!events.length){ eventsList.innerHTML='<div style="color:#64748b">لا يوجد فعاليات الآن.</div>'; return; }
     eventsList.innerHTML=events.map(ev=>`
       <article class="card" style="padding:14px;border-radius:16px">
-        <div style="font-weight:950">${esc(ev.title||"فعالية")}</div>
+        <div style="font-weight:950">${ev.title||"فعالية"}</div>
         <div style="margin-top:8px;color:#64748b;line-height:1.9">
-          📍 ${esc(ev.place||"—")}<br/>📅 ${esc(ev.date||"—")}<br/>⏱️ ${Number(ev.hours||0)} ساعة — ⭐ ${Number(ev.points||0)} نقطة
+          📍 ${ev.place||"—"}<br/>📅 ${ev.date||"—"}<br/>⏱️ ${Number(ev.hours||0)} ساعة — ⭐ ${Number(ev.points||0)} نقطة
         </div>
-        ${ev.desc?`<div style="margin-top:8px;line-height:1.9">${esc(ev.desc)}</div>`:""}
+        ${ev.desc?`<div style="margin-top:8px;line-height:1.9">${ev.desc}</div>`:""}
         <div style="margin-top:10px"><button class="btn btn--solid" data-reg="${ev.id}" type="button">تسجيل حضور</button></div>
         <div style="color:#64748b;margin-top:8px;font-size:13px">* اعتماد النقاط من الأدمن.</div>
       </article>`).join("");

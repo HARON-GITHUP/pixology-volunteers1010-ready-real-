@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>مراجعة الإثباتات | الأدمن</title>
+    <link rel="icon" type="image/png" href="icon-192.png" />
+    <link rel="stylesheet" href="style.css?v=20260208" />
+    <meta name="theme-color" content="#0b1620" />
+  </head>
+
+  <body>
+    <header class="topnav">
+      <div class="container topnav__wrap">
+        <a class="brand" href="admin.html" style="gap: 10px">
+          <img
+            src="icon-192.png"
+            alt="Pixology"
+            style="width: 40px; height: 40px"
+          />
+          <span class="brand__text">Pixology • مراجعة الإثباتات</span>
+        </a>
+        <div
+          class="topnav__right"
+          style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap"
+        >
+          <a class="link" href="admin.html">رجوع للأدمن</a>
+          <button id="btnRefresh" class="btn btn--outline" type="button">
+            تحديث
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container" style="padding: 18px 0 70px">
+      <section class="card" style="padding: 16px; border-radius: 18px">
+        <h2 style="margin: 0 0 10px">🧾 مراجعة إثباتات المهام</h2>
+        <p class="muted" style="margin: 0 0 12px; line-height: 1.8">
+          هنا الأدمن يراجع الإثباتات المرفوعة للمهام اللي عليها (يتطلب إثبات)
+          ويوافق/يرفض.
+        </p>
+
+        <div class="admin-grid-3" style="align-items: end">
+          <div class="field">
+            <label class="lbl">الحالة</label>
+            <select id="filterStatus">
+              <option value="pending" selected>معلّق (Pending)</option>
+              <option value="approved">مقبول (Approved)</option>
+              <option value="rejected">مرفوض (Rejected)</option>
+              <option value="all">الكل</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="lbl">بحث (UID أو Task ID)</label>
+            <input id="filterSearch" placeholder="اكتب uid أو taskId..." />
+          </div>
+
+          <div class="field">
+            <label class="lbl">عدد النتائج</label>
+            <div id="countBox" class="hint">—</div>
+          </div>
+        </div>
+
+        <div
+          id="list"
+          class="grid"
+          style="
+            margin-top: 14px;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+          "
+        >
+          <p class="muted">تحميل...</p>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./review-proofs.js?v=20260208"></script>
+  </body>
+</html>

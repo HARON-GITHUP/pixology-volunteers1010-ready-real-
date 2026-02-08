@@ -9,47 +9,45 @@
     <title>ملفي الشخصي</title>
     <link rel="stylesheet" href="style.css?v=20260207012958" />
     <meta name="theme-color" content="#0b1620" />
-  
-<script>
-/* ✅ Fix: Firebase Authorized Domain issue
-   افتح المشروع على localhost بدل 127.0.0.1 */
-try{
-  if (location.hostname === "127.0.0.1") {
-    const u = new URL(location.href);
-    u.hostname = "localhost";
-    location.replace(u.toString());
-  }
-}catch(e){}
-</script>
 
-<script src="./polyfills.js?v=20260207012958"></script>
-<script src="./debug-overlay.js?v=20260207012958"></script>
-<script>
-/* ✅ Universal cache/SW fix (runs once per version) */
-(async function() {
-  try {
-    const host = location.hostname;
-    const isLocal = host === "localhost" || host === "127.0.0.1";
-    if (isLocal) return;
+    <script>
+      /* ✅ Fix: Firebase Authorized Domain issue */
+      try {
+        if (location.hostname === "127.0.0.1") {
+          const u = new URL(location.href);
+          u.hostname = "localhost";
+          location.replace(u.toString());
+        }
+      } catch (e) {}
+    </script>
 
-    const key = "px_swfix_v";
-    const v = "20260207012958";
-    if (localStorage.getItem(key) === v) return;
-    localStorage.setItem(key, v);
+    <script src="./polyfills.js?v=20260207012958"></script>
+    <script src="./debug-overlay.js?v=20260207012958"></script>
+    <script>
+      /* ✅ Universal cache/SW fix (runs once per version) */
+      (async function () {
+        try {
+          const host = location.hostname;
+          const isLocal = host === "localhost" || host === "127.0.0.1";
+          if (isLocal) return;
 
-    if ("serviceWorker" in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(r => r.unregister()));
-    }
-    if (window.caches && caches.keys) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map(k => caches.delete(k)));
-    }
-  } catch(e) {}
-})();
-</script>
+          const key = "px_swfix_v";
+          const v = "20260207012958";
+          if (localStorage.getItem(key) === v) return;
+          localStorage.setItem(key, v);
 
-</head>
+          if ("serviceWorker" in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map((r) => r.unregister()));
+          }
+          if (window.caches && caches.keys) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((k) => caches.delete(k)));
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
 
   <body>
     <!-- TOP NAV -->
@@ -62,7 +60,6 @@ try{
         <div class="topnav__actions">
           <a class="link" href="verify.html">✅ تحقق شهادة</a>
           <a class="link" href="leaderboard.html">🏆 الترتيب</a>
-          <a class="link" href="events.html">📅 الفعاليات</a>
           <a class="link" href="dashboard.html">📊 الإحصائيات</a>
           <button id="btnLogout" type="button" style="display: none">
             تسجيل خروج
@@ -72,32 +69,73 @@ try{
     </header>
 
     <main class="container" style="padding: 24px 0 70px">
-    <!-- =========================
-         NOTIFICATIONS + TASKS
-    ========================== -->
-    <section class="card" style="margin-top: 14px; padding: 18px; border-radius: 18px" id="tasks">
-      <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap">
-        <h2 style="margin:0">🔔 الإشعارات</h2>
-        <button class="btn" id="btnMarkNotifs" type="button">تحديد الكل كمقروء</button>
-      </div>
-      <div id="notifList" class="grid" style="margin-top:10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px"></div>
-    </section>
+      <!-- ✅ الإشعارات (النظام الجديد فقط) -->
+      <section
+        class="card"
+        style="margin-top: 14px; padding: 18px; border-radius: 18px"
+        id="tasks"
+      >
+        <div
+          style="
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+          "
+        >
+          <h2 style="margin: 0">🔔 الإشعارات</h2>
+          <button class="btn" id="btnMarkNotifs" type="button">
+            تحديد الكل كمقروء
+          </button>
+        </div>
+        <div
+          id="notifList"
+          class="grid"
+          style="
+            margin-top: 10px;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 12px;
+          "
+        ></div>
+      </section>
 
-    <section class="card" style="margin-top: 14px; padding: 18px; border-radius: 18px">
-      <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap">
-        <h2 style="margin:0">🧩 مهامي</h2>
-        <button class="btn" id="btnRefreshMyTasks" type="button">تحديث</button>
-      </div>
-      <p style="margin:8px 0 0; color:#64748b; line-height:1.8">
-        لما تدوس “موافقة” على المهمة، العداد يبدأ فورًا حسب عدد الساعات.
-      </p>
-      <div id="myTasksList" class="grid" style="margin-top:10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px"></div>
-    </section>
+      <!-- ✅ المهام (النظام الجديد فقط) -->
+      <section
+        class="card"
+        style="margin-top: 14px; padding: 18px; border-radius: 18px"
+      >
+        <div
+          style="
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+          "
+        >
+          <h2 style="margin: 0">🧩 مهامي</h2>
+          <button class="btn" id="btnRefreshMyTasks" type="button">
+            تحديث
+          </button>
+        </div>
+        <p style="margin: 8px 0 0; color: #64748b; line-height: 1.8">
+          لما تدوس “موافقة” على المهمة، العداد يبدأ فورًا حسب عدد الساعات.
+        </p>
+        <div
+          id="myTasksList"
+          class="grid"
+          style="
+            margin-top: 10px;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 12px;
+          "
+        ></div>
+      </section>
 
       <!-- بطاقة الملف -->
-      <div class="v-card" style="padding: 18px">
+      <div class="v-card" style="padding: 18px; margin-top: 14px">
         <h2 style="margin: 0 0 14px">ملفي الشخصي</h2>
-
         <p id="msg" class="muted" style="margin: 0 0 14px; display: none"></p>
 
         <div
@@ -146,7 +184,6 @@ try{
           </div>
 
           <div><b>آخر تسجيل دخول:</b> <span id="pLast">—</span></div>
-
           <div><b>النوع (Role):</b> <span id="pRole">—</span></div>
           <div><b>الحالة (Active):</b> <span id="pActive">—</span></div>
 
@@ -158,9 +195,8 @@ try{
               class="btn btn--solid"
               href="#"
               style="display: none"
+              >فتح صفحتي العامة</a
             >
-              فتح صفحتي العامة
-            </a>
 
             <button
               id="btnCopyPublic"
@@ -339,37 +375,45 @@ try{
           </div>
         </div>
       </div>
-      <div class="v-card" style="margin-top: 14px; padding: 16px">
-        <h3 style="margin: 0 0 10px">🧩 التاسكات</h3>
-        <div id="taskList" style="display: grid; gap: 10px">
-          <p class="muted">لا توجد تاسكات</p>
-        </div>
-      </div>
 
-      <!-- بطاقة الإشعارات -->
-      <div class="v-card" style="margin-top: 14px; padding: 16px">
-        <h3 style="margin: 0 0 10px">🔔 الإشعارات</h3>
-        <div id="notifyList" style="display: grid; gap: 10px">
-          <p class="muted">لا يوجد إشعارات</p>
+      <section
+        class="card"
+        style="margin-top: 14px; padding: 16px; border-radius: 18px"
+      >
+        <div
+          class="grid"
+          style="
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+          "
+        >
+          <div class="card" style="padding: 14px; border-radius: 16px">
+            <div style="color: #64748b; font-weight: 800">⭐ نقاطي</div>
+            <div
+              id="pointsValue"
+              style="font-size: 28px; font-weight: 950; margin-top: 6px"
+            >
+              —
+            </div>
+            <div style="color: #64748b; margin-top: 6px; line-height: 1.8">
+              تزيد تلقائيًا عند إنهاء المهام.
+            </div>
+          </div>
+          <div class="card" style="padding: 14px; border-radius: 16px">
+            <div style="color: #64748b; font-weight: 800">🏆 ترتيبي</div>
+            <div
+              id="rankValue"
+              style="font-size: 28px; font-weight: 950; margin-top: 6px"
+            >
+              —
+            </div>
+            <div style="color: #64748b; margin-top: 6px; line-height: 1.8">
+              حسب إجمالي النقاط بين المتطوعين.
+            </div>
+          </div>
         </div>
-      </div>
-    
-    <section class="card" style="margin-top:14px; padding:16px; border-radius:18px">
-      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px">
-        <div class="card" style="padding:14px; border-radius:16px">
-          <div style="color:#64748b; font-weight:800">⭐ نقاطي</div>
-          <div id="pointsValue" style="font-size:28px; font-weight:950; margin-top:6px">—</div>
-          <div style="color:#64748b; margin-top:6px; line-height:1.8">تزيد تلقائيًا عند إنهاء المهام.</div>
-        </div>
-        <div class="card" style="padding:14px; border-radius:16px">
-          <div style="color:#64748b; font-weight:800">🏆 ترتيبي</div>
-          <div id="rankValue" style="font-size:28px; font-weight:950; margin-top:6px">—</div>
-          <div style="color:#64748b; margin-top:6px; line-height:1.8">حسب إجمالي النقاط بين المتطوعين.</div>
-        </div>
-      </div>
-    </section>
-
-</main>
+      </section>
+    </main>
 
     <script type="module" src="my-profile.js?v=20260207012958"></script>
   </body>

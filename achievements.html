@@ -96,13 +96,9 @@
       <section class="card" style="margin-top: 16px; padding: 18px; border-radius: 18px">
         <h2 style="margin: 0 0 10px">معرض إنجازات (صور)</h2>
         <p style="margin: 0 0 12px; color:#64748b; line-height:1.8">
-          ضع صور الفعاليات هنا لاحقًا (سنربطها بـ Firebase Storage في المرحلة القادمة).
+          الصور تُدار من الأدمن (رفع/حذف) وتظهر هنا تلقائيًا.
         </p>
-        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px">
-          <div class="card" style="height:140px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:#94a3b8">صورة 1</div>
-          <div class="card" style="height:140px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:#94a3b8">صورة 2</div>
-          <div class="card" style="height:140px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:#94a3b8">صورة 3</div>
-        </div>
+        <div id="gallery" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px"></div>
       </section>
     </main>
 

@@ -1,11 +1,11 @@
 // ✅ Fix: Firebase auth domains (open with localhost, not 127.0.0.1)
-try{
+try {
   if (location.hostname === "127.0.0.1") {
     const u = new URL(location.href);
     u.hostname = "localhost";
     location.replace(u.toString());
   }
-}catch(e){}
+} catch (e) {}
 
 const body = document.body;
 
@@ -152,4 +152,27 @@ document.querySelectorAll('[data-modal="details"]').forEach((btn) => {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeModal();
   });
+})();
+// ===============================
+// ✅ DEV MODE: Disable SW on localhost (fix white screen + cache issues)
+// ===============================
+(function () {
+  const isLocal =
+    location.hostname === "localhost" || location.hostname === "127.0.0.1";
+
+  if (!("serviceWorker" in navigator)) return;
+
+  if (isLocal) {
+    // Unregister all service workers
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((r) => r.unregister());
+    });
+
+    // Clear caches (best effort)
+    if ("caches" in window) {
+      caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
+    }
+
+    console.log("✅ Service Worker disabled in local dev");
+  }
 })();

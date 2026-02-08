@@ -57,7 +57,6 @@
         <div class="topnav__actions">
           <a class="link" href="verify.html">✅ تحقق شهادة</a>
           <a class="link" href="leaderboard.html">🏆 الترتيب</a>
-          <a class="link" href="events.html">📅 الفعاليات</a>
           <a class="link" href="dashboard.html">📊 الإحصائيات</a>
           <a class="link" href="index.html">الرئيسية</a>
           <a class="link" href="my-profile.html">ملفي الشخصي</a>
@@ -100,6 +99,28 @@
 
       <section class="card" style="margin-top: 14px; padding: 16px; border-radius: 18px">
         <div id="tasksList" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px"></div>
+      </section>
+
+      <!-- ✅ إثبات المهام (يظهر فقط لو في مهام مطلوبة إثبات) -->
+      <section id="proofPanel" class="card" style="margin-top:14px; padding:16px; border-radius:18px; display:none">
+        <h2 style="margin:0 0 6px">📎 رفع إثبات مهمة</h2>
+        <p style="margin:0 0 12px; color:#64748b; line-height:1.9">
+          اختار المهمة المطلوب لها إثبات، وارفع صورة أو PDF. بعد الرفع هتظهر عند الأدمن للمراجعة.
+        </p>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; align-items:end">
+          <div>
+            <label style="display:block; font-weight:800; margin-bottom:6px">المهمة</label>
+            <select id="proofTaskSelect" style="width:100%; padding:10px; border-radius:12px"></select>
+          </div>
+          <div>
+            <label style="display:block; font-weight:800; margin-bottom:6px">الملف (صورة/PDF)</label>
+            <input id="proofFile" type="file" accept="image/*,application/pdf" style="width:100%" />
+          </div>
+          <div>
+            <button class="btn btn--solid" id="btnSendProof" type="button" style="width:100%">إرسال الإثبات</button>
+          </div>
+        </div>
+        <div id="proofMsg" style="margin-top:10px; color:#64748b"></div>
       </section>
     </main>
 

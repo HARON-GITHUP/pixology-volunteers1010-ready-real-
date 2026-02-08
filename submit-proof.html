@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>رفع إثبات المهمة</title>
+    <link rel="icon" type="image/png" href="icon-192.png" />
+    <link rel="stylesheet" href="style.css?v=20260208" />
+    <meta name="theme-color" content="#0b1620" />
+  </head>
+
+  <body>
+    <header class="topnav">
+      <div class="container topnav__wrap">
+        <a class="brand" href="my-profile.html" style="gap: 10px">
+          <img
+            src="icon-192.png"
+            alt="Pixology"
+            style="width: 40px; height: 40px"
+          />
+          <span class="brand__text">Pixology • رفع إثبات</span>
+        </a>
+
+        <div class="topnav__right">
+          <a class="link" href="my-profile.html">رجوع لملفي</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="container" style="padding: 18px 0 70px">
+      <section class="card" style="padding: 16px; border-radius: 18px">
+        <h2 style="margin: 0 0 10px">📎 رفع إثبات المهمة</h2>
+        <p class="muted" style="margin: 0 0 12px; line-height: 1.9">
+          ارفع صورة أو PDF يثبت إنك نفذت المهمة. بعد الرفع، الأدمن هيراجع
+          ويوافق.
+        </p>
+
+        <div class="admin-grid-3">
+          <div class="card admin-subcard">
+            <label class="lbl">المهمة</label>
+            <div id="taskInfo" class="hint">تحميل...</div>
+            <div class="hint" style="margin-top: 8px">
+              Task ID:
+              <span id="taskIdEl" style="font-family: ui-monospace, monospace"
+                >—</span
+              >
+            </div>
+          </div>
+
+          <div class="card admin-subcard">
+            <label class="lbl">الملف</label>
+            <input
+              id="proofFile"
+              type="file"
+              accept="image/*,application/pdf"
+            />
+            <div class="hint" style="margin-top: 8px; line-height: 1.9">
+              المسموح: صورة أو PDF<br />
+              الأفضل: PDF لو الإثبات متعدد الصفحات.
+            </div>
+          </div>
+
+          <div class="card admin-subcard">
+            <label class="lbl">ملاحظات (اختياري)</label>
+            <textarea
+              id="proofNote"
+              rows="6"
+              placeholder="اكتب أي ملاحظات للأدمن..."
+            ></textarea>
+
+            <button
+              id="btnUpload"
+              class="btn btn--solid"
+              type="button"
+              style="width: 100%; margin-top: 10px"
+            >
+              رفع الإثبات
+            </button>
+
+            <div id="msg" class="hint" style="margin-top: 10px"></div>
+          </div>
+        </div>
+
+        <hr
+          style="margin: 14px 0; border: 0; border-top: 1px solid var(--border)"
+        />
+
+        <div id="previewBox" style="display: none">
+          <label class="lbl">معاينة</label>
+          <div
+            id="preview"
+            class="card"
+            style="padding: 12px; border-radius: 16px"
+          ></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./submit-proof.js?v=20260208"></script>
+  </body>
+</html>

@@ -1,32 +1,5 @@
 // ui.js - Simple UI helpers (Toast + Loading) used across the project
 
-
-export function escapeHTML(input = "") {
-  const str = String(input ?? "");
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-export function safeUrl(input = "", fallback = "p.jpg") {
-  const s = String(input ?? "").trim();
-  // allow relative assets + https/http + data images (for small avatars)
-  if (
-    s.startsWith("http://") ||
-    s.startsWith("https://") ||
-    s.startsWith("./") ||
-    s.startsWith("../") ||
-    s.startsWith("data:image/") ||
-    s.startsWith("blob:") ||
-    s === "" ||
-    s === fallback
-  ) return s || fallback;
-  return fallback;
-}
-
 let _inited = false;
 
 function ensureUI() {
@@ -70,22 +43,22 @@ function ensureUI() {
   }
 }
 
-export function toast(message, type="info", ms=2200) {
+export function toast(message, type = "info", ms = 2200) {
   ensureUI();
   const t = document.getElementById("toast");
   const m = document.getElementById("toastMsg");
   if (!t || !m) return;
   m.textContent = String(message ?? "");
-  t.classList.remove("toast--success","toast--error","toast--warn");
+  t.classList.remove("toast--success", "toast--error", "toast--warn");
   if (type === "success") t.classList.add("toast--success");
   else if (type === "error") t.classList.add("toast--error");
   else if (type === "warn") t.classList.add("toast--warn");
   t.classList.add("is-show");
   clearTimeout(t._timer);
-  t._timer = setTimeout(()=> t.classList.remove("is-show"), ms);
+  t._timer = setTimeout(() => t.classList.remove("is-show"), ms);
 }
 
-export function setLoading(on=true) {
+export function setLoading(on = true) {
   ensureUI();
   const el = document.getElementById("loading");
   if (!el) return;
@@ -95,50 +68,65 @@ export function setLoading(on=true) {
 
 // Redirect 127.0.0.1 -> localhost (Firebase Authorized Domains issue)
 export function normalizeLocalhost() {
-  try{
+  try {
     if (location.hostname === "127.0.0.1") {
       const url = new URL(location.href);
       url.hostname = "localhost";
       location.replace(url.toString());
     }
-  }catch(e){}
-}
-
-
-// Require auth on protected pages
-export function requireAuth(options = {}) {
-  const {
-    onAuthed = null,
-    onGuest = null,
-    redirectTo = "register.html",
-    message = "لازم تسجل دخول الأول.",
-  } = options;
-
-  // Lazy import to avoid circular issues
-  import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js")
-    .then(({ onAuthStateChanged }) => {
-      // auth instance is exported from firebase.js on each page typically; but we cannot import here safely.
-      // So callers should pass auth via window.AUTH if needed.
-    })
-    .catch(() => {});
-}
-
-// Safer auth guard (expects window.authRef = auth from firebase.js)
-export function guardAuth({ redirectTo = "register.html", message = "لازم تسجل دخول الأول.", allow = null } = {}) {
-  try {
-    const auth = window.authRef;
-    if (!auth) return;
-    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js").then(({ onAuthStateChanged }) => {
-      onAuthStateChanged(auth, (user) => {
-        if (!user) {
-          toast(message, "warn", 2600);
-          setTimeout(() => (location.href = redirectTo), 400);
-          return;
-        }
-        if (typeof allow === "function") allow(user);
-      });
-    });
   } catch (e) {}
+}
+
+/**
+ * ✅ Get auth reference safely.
+ * Expected patterns:
+ * - window.authRef (recommended)
+ * - window.auth / window.AUTH (fallback)
+ */
+function getAuthRef() {
+  return window.authRef || window.auth || window.AUTH || null;
+}
+
+/**
+ * ✅ Safer auth guard
+ * - Uses window.authRef (or fallback window.auth/window.AUTH)
+ * - Returns unsubscribe function (if available)
+ */
+let _guardUnsub = null;
+
+export function guardAuth({
+  redirectTo = "register.html",
+  message = "لازم تسجل دخول الأول.",
+  allow = null,
+} = {}) {
+  try {
+    const auth = getAuthRef();
+    if (!auth) return null;
+
+    // prevent duplicate listener
+    if (typeof _guardUnsub === "function") {
+      try {
+        _guardUnsub();
+      } catch {}
+      _guardUnsub = null;
+    }
+
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js")
+      .then(({ onAuthStateChanged }) => {
+        _guardUnsub = onAuthStateChanged(auth, (user) => {
+          if (!user) {
+            toast(message, "warn", 2600);
+            setTimeout(() => (location.href = redirectTo), 400);
+            return;
+          }
+          if (typeof allow === "function") allow(user);
+        });
+      })
+      .catch(() => {});
+    return _guardUnsub;
+  } catch (e) {
+    return null;
+  }
 }
 
 // Simple anti-double-submit (client-side)
@@ -150,4 +138,3 @@ export function throttleAction(key, ms = 3000) {
   localStorage.setItem(k, String(now));
   return true;
 }
-

@@ -1,5 +1,5 @@
 import { auth, db } from "./firebase.js";
-import { toast, setLoading, escapeHTML } from "./ui.js";
+import { toast, setLoading } from "./ui.js";
 
 import {
   collection,
@@ -49,7 +49,9 @@ function showToast(text, sub = "") {
 }
 
 function safe(str) {
-  return escapeHTML(String(str ?? ""));
+  return String(str ?? "")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 /** ✅ تحقق Role من users/{uid} (admin + super_admin) */

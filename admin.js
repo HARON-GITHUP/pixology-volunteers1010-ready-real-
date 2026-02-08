@@ -1,6 +1,6 @@
-// admin.js (FULL CLEAN VERSION)
-import { auth, db } from "./firebase.js";
-import { toast, setLoading, guardAuth, escapeHTML } from "./ui.js";
+// admin.js (FULL CLEAN VERSION - FIXED)
+import { auth, db, storage } from "./firebase.js";
+import { toast, setLoading, guardAuth } from "./ui.js";
 
 import {
   signInWithEmailAndPassword,
@@ -14,6 +14,8 @@ import {
   where,
   orderBy,
   onSnapshot,
+  getDocs,
+  limit,
   serverTimestamp,
   doc,
   updateDoc,
@@ -23,6 +25,15 @@ import {
   setDoc,
   addDoc,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+import {
+  ref as sRef,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+import { auth, db, storage } from "./firebase.js";
+window.authRef = auth;
 
 console.log("PROJECT:", db.app.options.projectId);
 
@@ -85,6 +96,9 @@ let unsubReqs = null;
 let ADMIN_OK = false;
 let CURRENT_ROLE = null;
 
+// ✅ منع تكرار interval
+let pointsTimer = null;
+
 /** ========== Helpers ========== */
 const norm = (v) =>
   String(v ?? "")
@@ -92,6 +106,20 @@ const norm = (v) =>
     .toLowerCase();
 
 const digitsOnly = (s) => String(s ?? "").replace(/\D/g, "");
+
+// ✅ escapeHtml (نسخة واحدة فقط)
+function escapeHtml(s = "") {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function safeAttr(str) {
+  return String(str ?? "").replaceAll('"', "&quot;");
+}
 
 function setControlsEnabled(enabled) {
   if (searchEl) searchEl.disabled = !enabled;
@@ -118,19 +146,6 @@ function showToast(text, sub = "") {
   toastEl.innerHTML = `${text}${sub ? `<small>${sub}</small>` : ""}`;
   toastEl.classList.add("show");
   setTimeout(() => toastEl.classList.remove("show"), 4500);
-}
-
-function safeAttr(str) {
-  return String(str ?? "").replaceAll('"', "&quot;");
-}
-
-function escapeHtml(s = "") {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 function getSelectedIds() {
@@ -174,7 +189,7 @@ async function pushNotification(uid, title, message, type = "info") {
     if (!uid) return;
 
     await addDoc(collection(db, NOTI_COL), {
-      uid: uid, // صاحب الإشعار
+      uid: uid,
       title: String(title || "إشعار"),
       message: String(message || ""),
       type: String(type || "info"),
@@ -186,8 +201,6 @@ async function pushNotification(uid, title, message, type = "info") {
     console.log("pushNotification error:", e);
   }
 }
-
-/** ✅ Task */
 
 /** ✅ تحقق Role من users/{uid} */
 async function checkAdmin(user) {
@@ -253,11 +266,11 @@ function renderVolunteersTable() {
           }
         </td>
 
-        <td>${d.name || ""}</td>
-        <td>${d.volunteerId || ""}</td>
-        <td>${d.phone || ""}</td>
-        <td>${d.gender || ""}</td>
-        <td>${d.joinedAt || ""}</td>
+        <td>${escapeHtml(d.name || "")}</td>
+        <td>${escapeHtml(d.volunteerId || "")}</td>
+        <td>${escapeHtml(d.phone || "")}</td>
+        <td>${escapeHtml(d.gender || "")}</td>
+        <td>${escapeHtml(d.joinedAt || "")}</td>
 
         <td><input class="mini" type="number" min="0" value="${
           d.hours ?? 0
@@ -278,7 +291,7 @@ function renderVolunteersTable() {
         <td style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="miniBtn" data-action="save">حفظ</button>
           <button class="miniBtn" data-action="issueCert">إصدار شهادة</button>
-          <button class="miniBtn" data-action="task">تاسك</button>
+          <button class="miniBtn" data-action="task">➕ إضافة تاسك</button>
           <a class="miniBtn" style="text-decoration:none; display:inline-block;"
              href="certificate.html?id=${encodeURIComponent(
                d.volunteerId || d._docId,
@@ -304,27 +317,15 @@ function toCsv(docs) {
     "notes",
     "country",
   ];
-  const escape = (v) => `"${String(v ?? "").replaceAll('"', '""')}"`;
+  const esc = (v) => `"${String(v ?? "").replaceAll('"', '""')}"`;
   const lines = [
     headers.join(","),
-    ...docs.map((d) => headers.map((h) => escape(d[h])).join(",")),
+    ...docs.map((d) => headers.map((h) => esc(d[h])).join(",")),
   ];
   return lines.join("\n");
 }
 
-/** توليد Volunteer ID تلقائي */
-async function generateVolunteerId() {
-  const counterRef = doc(db, COUNTERS_COL, "volunteers");
-  const nextNumber = await runTransaction(db, async (tx) => {
-    const snap = await tx.get(counterRef);
-    const current = snap.exists() ? snap.data().value || 0 : 0;
-    const next = current + 1;
-    tx.set(counterRef, { value: next }, { merge: true });
-    return next;
-  });
-  return `VOL-${String(nextNumber).padStart(6, "0")}`;
-}
-
+/** توليد Certificate ID */
 async function generateCertificateId() {
   const counterRef = doc(db, COUNTERS_COL, "certificates");
   const nextNumber = await runTransaction(db, async (tx) => {
@@ -335,6 +336,19 @@ async function generateCertificateId() {
     return next;
   });
   return `CERT-${String(nextNumber).padStart(6, "0")}`;
+}
+
+/** ✅ Counter helper داخل نفس Transaction (Fix Nested Transaction) */
+function counterRef(name) {
+  return doc(db, COUNTERS_COL, name);
+}
+async function nextCounterInTx(tx, name) {
+  const ref = counterRef(name);
+  const snap = await tx.get(ref);
+  const current = snap.exists() ? snap.data().value || 0 : 0;
+  const next = current + 1;
+  tx.set(ref, { value: next }, { merge: true });
+  return next;
 }
 
 /** ✅ إضافة متطوع يدويًا */
@@ -361,7 +375,16 @@ mAddBtn?.addEventListener("click", async () => {
     const f = mPhoto?.files?.[0];
     if (f) photoData = await fileToDataURL(f);
 
-    const volunteerId = await generateVolunteerId();
+    // ✅ توليد VOL داخل Transaction واحد مستقل (مش داخل approve)
+    const nextNum = await runTransaction(db, async (tx) => {
+      const ref = counterRef("volunteers");
+      const snap = await tx.get(ref);
+      const current = snap.exists() ? snap.data().value || 0 : 0;
+      const next = current + 1;
+      tx.set(ref, { value: next }, { merge: true });
+      return next;
+    });
+    const volunteerId = `VOL-${String(nextNum).padStart(6, "0")}`;
 
     await setDoc(doc(db, VOL_COL, volunteerId), {
       name,
@@ -418,17 +441,15 @@ function renderRequests(reqDocs) {
     .map((r) => {
       const t = r.createdAtText || "";
       const country = r.country || "";
-      const safeNotes = String(r.notes || "")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;");
+      const safeNotes = escapeHtml(String(r.notes || ""));
       return `
         <tr data-reqid="${r._docId}">
           <td>${t}</td>
-          <td>${r.name || ""}</td>
-          <td>${r.phoneRaw || r.phoneDigits || ""}</td>
-          <td>${r.gender || ""}</td>
-          <td>${r.joinedAt || ""}</td>
-          <td>${country}</td>
+          <td>${escapeHtml(r.name || "")}</td>
+          <td>${escapeHtml(r.phoneRaw || r.phoneDigits || "")}</td>
+          <td>${escapeHtml(r.gender || "")}</td>
+          <td>${escapeHtml(r.joinedAt || "")}</td>
+          <td>${escapeHtml(country)}</td>
           <td>${safeNotes}</td>
           <td>
             <button class="miniBtn" data-action="approve">موافقة</button>
@@ -440,7 +461,7 @@ function renderRequests(reqDocs) {
     .join("");
 }
 
-/** ✅✅ أزرار طلبات التطوع (approve / reject) */
+/** ✅✅ أزرار طلبات التطوع (approve / reject) - FIXED */
 reqRowsEl?.addEventListener("click", async (e) => {
   const btn = e.target?.closest?.("button[data-action]");
   if (!btn) return;
@@ -478,8 +499,12 @@ reqRowsEl?.addEventListener("click", async (e) => {
         const currentStatus = String(r.status || "Pending").trim();
         if (currentStatus !== "Pending") return;
 
-        const volunteerId = await generateVolunteerId();
-        const userUid = (r.uid || r.userUid || "").trim();
+        const userUid = String(r.uid || r.userUid || "").trim();
+
+        // ✅ توليد VolunteerId داخل نفس Transaction (بدون nested transaction)
+        const nextNum = await nextCounterInTx(tx, "volunteers");
+        const volunteerId = `VOL-${String(nextNum).padStart(6, "0")}`;
+
         const volDocId = userUid || volunteerId;
         const volRef = doc(db, VOL_COL, volDocId);
 
@@ -493,6 +518,7 @@ reqRowsEl?.addEventListener("click", async (e) => {
           notes: r.notes || "",
           photoData: r.photoData || r.photoUrl || "",
           hours: 0,
+          points: 0,
           status: "Active",
           organization: "Pixology Foundation",
           createdAt: serverTimestamp(),
@@ -515,7 +541,8 @@ reqRowsEl?.addEventListener("click", async (e) => {
       });
 
       showToast("✅ تم قبول الطلب");
-      // ✅ تفعيل حساب المستخدم كـ Volunteer
+
+      // ✅ تفعيل حساب المستخدم كـ Volunteer (خارج transaction)
       if (requestUid) {
         await setDoc(
           doc(db, "users", requestUid),
@@ -523,7 +550,6 @@ reqRowsEl?.addEventListener("click", async (e) => {
             role: "volunteer",
             active: true,
             pending: false,
-            volunteerId: null,
             updatedAt: serverTimestamp(),
             approvedAt: serverTimestamp(),
             approvedByUid: auth.currentUser?.uid || "",
@@ -538,7 +564,9 @@ reqRowsEl?.addEventListener("click", async (e) => {
         await pushNotification(
           requestUid,
           "تم قبولك ✅",
-          `تم قبول طلب التطوع الخاص بك${requestName ? ` يا ${requestName}` : ""}.`,
+          `تم قبول طلب التطوع الخاص بك${
+            requestName ? ` يا ${requestName}` : ""
+          }.`,
           "success",
         );
       }
@@ -728,15 +756,11 @@ rowsEl?.addEventListener("click", async (e) => {
     if (!ADMIN_OK) return toast("❌ غير مسموح");
 
     let userUid = "";
-    let vName = "";
-    let vId = "";
     try {
       const snap = await getDoc(vRef);
       if (snap.exists()) {
         const v = snap.data() || {};
         userUid = v.userUid || v.uid || "";
-        vName = v.name || "";
-        vId = v.volunteerId || docId;
       }
     } catch {}
 
@@ -745,34 +769,7 @@ rowsEl?.addEventListener("click", async (e) => {
       return;
     }
 
-    const title = prompt("عنوان التاسك:", "مطلوب تنفيذ مهمة");
-    if (!title) return;
-
-    const details = prompt("تفاصيل التاسك:", `متطوع: ${vName} (${vId})`) || "";
-    const priority =
-      prompt("الأولوية (low / normal / high):", "normal") || "normal";
-
-    btn.disabled = true;
-    const old = btn.textContent;
-    btn.textContent = "جارٍ...";
-
-    try {
-      await pushNotification(
-        userUid,
-        "لديك مهمة جديدة ✅",
-        `${title}${details ? ` — ${details}` : ""}`,
-        "info",
-      );
-
-      await auditLog("task_created", { assignedTo: userUid, title, priority });
-      showToast("✅ تم إنشاء تاسك", vName || "");
-    } catch (e) {
-      console.log(e);
-      toast("❌ فشل إنشاء التاسك");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = old;
-    }
+    location.href = `assign-task.html?uid=${encodeURIComponent(userUid)}`;
   }
 });
 
@@ -868,8 +865,6 @@ function stopListeners() {
 
 /** =========================
  * ✅ Points Engine (Admin-side)
- * - Volunteers create task_events when completing tasks
- * - Admin processes events and updates pixology_volunteers points/hours
 ========================= */
 async function processTaskEvents() {
   if (!ADMIN_OK) return;
@@ -896,7 +891,6 @@ async function processTaskEvents() {
         continue;
       }
 
-      // load task
       const tSnap = await getDoc(doc(db, TASKS_COL, taskId));
       const task = tSnap.exists() ? tSnap.data() || {} : {};
       const title = task.title || "مهمة";
@@ -905,7 +899,6 @@ async function processTaskEvents() {
         Number(task.points || task.pointsEarned || hours || 0) ||
         Math.max(1, hours);
 
-      // find volunteer doc by userUid
       const vQ = query(
         collection(db, VOL_COL),
         where("userUid", "==", uid),
@@ -924,13 +917,14 @@ async function processTaskEvents() {
 
       const v = vDoc.data() || {};
       const newPoints = Number(v.points || 0) + pointsEarned;
-
-      // optionally add hours as well if task has hours credit
       const newHours = Number(v.hours || 0) + Math.max(0, hours);
+      const newTasksCompleted = Number(v.tasksCompleted || 0) + 1;
 
       await updateDoc(doc(db, VOL_COL, vDoc.id), {
         points: newPoints,
         hours: newHours,
+        tasksCompleted: newTasksCompleted,
+        lastTaskAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
 
@@ -961,27 +955,31 @@ async function processTaskEvents() {
 }
 
 function startListeners() {
-  // Requests
-  const reqQ = query(collection(db, REQ_COL), orderBy("createdAt", "desc"));
+  // ✅ Requests (Pending فقط)
+  const reqQ = query(
+    collection(db, REQ_COL),
+    where("status", "==", "Pending"),
+    orderBy("createdAt", "desc"),
+  );
+
   unsubReqs = onSnapshot(reqQ, (snap) => {
-    const reqDocs = snap.docs
-      .map((s) => {
-        const d = s.data() || {};
-        const t = d.createdAt?.toDate ? d.createdAt.toDate() : null;
-        return {
-          _docId: s.id,
-          assignedTo: d.uid || d.userUid || "",
-          name: d.name || "",
-          phone: d.phone || d.phoneRaw || "",
-          gender: d.gender || "",
-          joinedAt: d.joinedAt || "",
-          country: d.country || "",
-          notes: d.notes || "",
-          status: d.status || "Pending",
-          createdAtText: t ? t.toLocaleString("ar-EG") : "",
-        };
-      })
-      .filter((x) => x.status === "Pending");
+    const reqDocs = snap.docs.map((s) => {
+      const d = s.data() || {};
+      const t = d.createdAt?.toDate ? d.createdAt.toDate() : null;
+      return {
+        _docId: s.id,
+        assignedTo: d.uid || d.userUid || "",
+        name: d.name || "",
+        phoneRaw: d.phoneRaw || d.phoneDigits || d.phone || "",
+        phoneDigits: d.phoneDigits || "",
+        gender: d.gender || "",
+        joinedAt: d.joinedAt || "",
+        country: d.country || "",
+        notes: d.notes || "",
+        status: d.status || "Pending",
+        createdAtText: t ? t.toLocaleString("ar-EG") : "",
+      };
+    });
 
     renderRequests(reqDocs);
   });
@@ -1021,6 +1019,12 @@ onAuthStateChanged(auth, async (user) => {
   ADMIN_OK = false;
   CURRENT_ROLE = null;
 
+  // ✅ clear interval عند أي تغيير auth state
+  if (pointsTimer) {
+    clearInterval(pointsTimer);
+    pointsTimer = null;
+  }
+
   if (!user) {
     if (loginBox) loginBox.style.display = "block";
     if (dataBox) dataBox.style.display = "none";
@@ -1055,8 +1059,13 @@ onAuthStateChanged(auth, async (user) => {
   setControlsEnabled(true);
 
   startListeners();
-  // ✅ process points events every 5 seconds
-  setInterval(processTaskEvents, 5000);
+
+  // ✅ proof approvals + achievements photos
+  loadPendingSubmissions();
+  loadAchievementPhotos();
+
+  // ✅ interval واحد فقط
+  pointsTimer = setInterval(processTaskEvents, 5000);
   processTaskEvents();
 });
 
@@ -1065,9 +1074,6 @@ renderVolunteersTable();
 
 /* =========================
    TASKS (Admin assigns to a specific volunteer)
-   Collections:
-   - volunteer_tasks: each doc = one task assignment to a user
-   - notifications: push message to that user
 ========================= */
 const taskVolunteer = document.getElementById("taskVolunteer");
 const taskTitle = document.getElementById("taskTitle");
@@ -1111,7 +1117,9 @@ async function loadVolunteersForTasks() {
         .sort((a, b) => String(a.name).localeCompare(String(b.name), "ar"))
         .map(
           (v) =>
-            `<option value="${v.uid}">${escapeHtml(v.name)}${v.email ? " • " + escapeHtml(v.email) : ""}</option>`,
+            `<option value="${v.uid}">${escapeHtml(v.name)}${
+              v.email ? " • " + escapeHtml(v.email) : ""
+            }</option>`,
         )
         .join("");
   } catch (e) {
@@ -1135,7 +1143,6 @@ async function createTaskForVolunteer() {
 
   setLoading(true);
   try {
-    // Create task assignment
     const taskDoc = {
       assignedTo: uid,
       title,
@@ -1143,7 +1150,7 @@ async function createTaskForVolunteer() {
       durationHours: hours,
       points: points,
       requireProof: !!(taskRequireProof && taskRequireProof.checked),
-      status: "pending", // pending -> accepted -> completed/expired
+      status: "pending",
       assignedAt: serverTimestamp(),
       acceptedAt: null,
       dueAt: null,
@@ -1153,15 +1160,17 @@ async function createTaskForVolunteer() {
     };
     const ref = await addDoc(collection(db, "tasks"), taskDoc);
 
-    // Notification to volunteer
     await addDoc(collection(db, "notifications"), {
-      assignedTo: uid,
-      text: `📌 مهمة جديدة: ${title} (المدة: ${hours} ساعة)`,
-      link: `my-profile.html#tasks`,
-      seen: false,
+      uid,
+      title: "🧩 لديك مهمة جديدة",
+      message: `${title} • مدة: ${hours} ساعة • نقاط: ${points}${
+        taskDoc.requireProof ? " • مطلوب إثبات" : ""
+      }`,
+      type: "task_assigned",
+      read: false,
+      readAt: null,
       createdAt: serverTimestamp(),
       taskId: ref.id,
-      type: "task_assigned",
     });
 
     toast("تم إرسال المهمة للمتطوع ✅", "success");
@@ -1210,15 +1219,23 @@ async function loadRecentTasks() {
         return `
         <article class="card" style="padding:14px;border-radius:16px">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
-            <div style="font-weight:800">${t.title || "مهمة"}</div>
-            <div style="color:#64748b;font-size:13px">${taskStatusBadge(t.status)}</div>
+            <div style="font-weight:800">${escapeHtml(t.title || "مهمة")}</div>
+            <div style="color:#64748b;font-size:13px">${taskStatusBadge(
+              t.status,
+            )}</div>
           </div>
           <div style="color:#64748b;margin-top:8px;line-height:1.8">
-            للمتطوع: <b>${t.assignedTo || "—"}</b><br/>
+            للمتطوع: <b>${escapeHtml(t.assignedTo || "—")}</b><br/>
             مدة: <b>${safeNum(t.durationHours, 0)}</b> ساعة<br/>
             نقاط: <b>${safeNum(t.points, 0)}</b>
           </div>
-          ${t.description ? `<div style="margin-top:8px;line-height:1.8">${t.description}</div>` : ""}
+          ${
+            t.description
+              ? `<div style="margin-top:8px;line-height:1.8">${escapeHtml(
+                  t.description,
+                )}</div>`
+              : ""
+          }
           <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap">
             <button class="btn" data-task-del="${d.id}" type="button">إلغاء</button>
           </div>
@@ -1227,7 +1244,6 @@ async function loadRecentTasks() {
       })
       .join("");
 
-    // Delete button (soft cancel)
     adminTasksList.querySelectorAll("[data-task-del]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const id = btn.getAttribute("data-task-del");
@@ -1255,12 +1271,119 @@ async function loadRecentTasks() {
 btnCreateTask?.addEventListener("click", createTaskForVolunteer);
 btnRefreshTasks?.addEventListener("click", loadRecentTasks);
 
-// init (best effort)
 loadVolunteersForTasks();
 loadRecentTasks();
 
 const evRegRows = document.getElementById("evRegRows");
 const subRows = document.getElementById("subRows");
+
+// Achievements photos
+const achFile = document.getElementById("achFile");
+const achCaption = document.getElementById("achCaption");
+const btnUploadAch = document.getElementById("btnUploadAch");
+const achList = document.getElementById("achList");
+const achMsg = document.getElementById("achMsg");
+
+/** =========================
+    Achievements Photos
+========================= */
+const ACH_PHOTOS_COL = "achievement_photos";
+
+async function loadAchievementPhotos() {
+  if (!achList) return;
+  achList.innerHTML = '<div class="muted">تحميل...</div>';
+  try {
+    const qy = query(
+      collection(db, ACH_PHOTOS_COL),
+      orderBy("createdAt", "desc"),
+      limit(12),
+    );
+    const snap = await getDocs(qy);
+    const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    achList.innerHTML =
+      arr
+        .map(
+          (p) => `
+      <article class="card" style="padding:12px;border-radius:16px;display:flex;gap:10px;align-items:center">
+        <img src="${p.url || ""}" alt="" style="width:60px;height:60px;object-fit:cover;border-radius:12px" />
+        <div style="flex:1">
+          <div style="font-weight:800">${
+            escapeHtml(p.caption || "") || "(بدون وصف)"
+          }</div>
+          <div class="muted" style="font-size:12px">${escapeHtml(p.id)}</div>
+        </div>
+        <button class="miniBtn" data-achdel="${p.id}" data-path="${
+          p.path || ""
+        }">🗑️ حذف</button>
+      </article>
+    `,
+        )
+        .join("") || '<div class="muted">لا توجد صور بعد.</div>';
+
+    achList.querySelectorAll("[data-achdel]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!ADMIN_OK) return toast("❌ غير مسموح");
+        const id = btn.getAttribute("data-achdel");
+        const path = btn.getAttribute("data-path");
+        const ok = confirm("تأكيد حذف الصورة؟");
+        if (!ok) return;
+        try {
+          if (path) {
+            try {
+              await deleteObject(sRef(storage, path));
+            } catch {}
+          }
+          await deleteDoc(doc(db, ACH_PHOTOS_COL, id));
+          toast("تم الحذف ✅", "success");
+          loadAchievementPhotos();
+        } catch (e) {
+          console.error(e);
+          toast("فشل الحذف", "error");
+        }
+      });
+    });
+  } catch (e) {
+    console.error(e);
+    achList.innerHTML = '<div class="muted">تعذر تحميل الصور.</div>';
+  }
+}
+
+btnUploadAch?.addEventListener("click", async () => {
+  if (!ADMIN_OK) return toast("❌ غير مسموح");
+  const file = achFile?.files?.[0] || null;
+  const caption = (achCaption?.value || "").trim();
+  if (!file) return toast("اختار صورة", "warn");
+  if (!(file.type || "").startsWith("image/"))
+    return toast("الملف لازم يكون صورة", "warn");
+  if (achMsg) achMsg.textContent = "جارٍ الرفع...";
+  setLoading(true);
+  try {
+    const safe = String(file.name || "img").replaceAll(" ", "_");
+    const path = `achievement_photos/${Date.now()}_${safe}`;
+    const r = sRef(storage, path);
+    await uploadBytes(r, file);
+    const url = await getDownloadURL(r);
+    await addDoc(collection(db, ACH_PHOTOS_COL), {
+      url,
+      path,
+      caption,
+      createdAt: serverTimestamp(),
+    });
+    if (achMsg) achMsg.textContent = "✅ تم رفع الصورة";
+    if (achCaption) achCaption.value = "";
+    if (achFile) achFile.value = "";
+    toast("✅ تم رفع الصورة", "success");
+    loadAchievementPhotos();
+  } catch (e) {
+    console.error(e);
+    if (achMsg) achMsg.textContent = "❌ فشل الرفع";
+    toast("فشل رفع الصورة", "error");
+  } finally {
+    setLoading(false);
+  }
+});
+
+/** ===== Event regs + submissions (باقي كودك كما هو) ===== */
 
 async function loadPendingEventRegs() {
   if (!evRegRows || !ADMIN_OK) return;
@@ -1287,8 +1410,8 @@ async function loadPendingEventRegs() {
           : "";
         return `<tr data-id="${d.id}">
         <td style="padding:10px">${t}</td>
-        <td style="padding:10px">${r.eventId || ""}</td>
-        <td style="padding:10px">${r.uid || ""}</td>
+        <td style="padding:10px">${escapeHtml(r.eventId || "")}</td>
+        <td style="padding:10px">${escapeHtml(r.uid || "")}</td>
         <td style="padding:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="miniBtn" data-ev-approve="1">اعتماد</button>
           <button class="miniBtn" data-ev-reject="1">رفض</button>
@@ -1363,12 +1486,14 @@ evRegRows?.addEventListener("click", async (e) => {
       decidedAt: serverTimestamp(),
       decidedBy: auth.currentUser?.uid || "",
     });
+
     await pushNotification(
       uid,
       "✅ تم اعتماد حضورك",
       `تم اعتماد حضور فعالية: ${title} (+${addHours} ساعة / +${addPoints} نقطة)`,
       "success",
     );
+
     loadPendingEventRegs();
   } catch (err) {
     console.error(err);
@@ -1400,12 +1525,14 @@ async function loadPendingSubmissions() {
           ? s.createdAt.toDate().toLocaleString("ar-EG")
           : "";
         const link = s.url
-          ? `<a class="miniBtn" target="_blank" href="${safeAttr(s.url)}" style="text-decoration:none">فتح</a>`
+          ? `<a class="miniBtn" target="_blank" href="${safeAttr(
+              s.url,
+            )}" style="text-decoration:none">فتح</a>`
           : "—";
         return `<tr data-id="${d.id}">
         <td style="padding:10px">${t}</td>
-        <td style="padding:10px">${s.taskId || ""}</td>
-        <td style="padding:10px">${s.uid || ""}</td>
+        <td style="padding:10px">${escapeHtml(s.taskId || "")}</td>
+        <td style="padding:10px">${escapeHtml(s.uid || "")}</td>
         <td style="padding:10px">${link}</td>
         <td style="padding:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="miniBtn" data-sub-approve="1">اعتماد</button>
@@ -1454,7 +1581,6 @@ subRows?.addEventListener("click", async (e) => {
       return;
     }
 
-    // Approve proof. If task requireProof => award now and complete task
     const tSnap = await getDoc(doc(db, "tasks", taskId));
     const t = tSnap.exists() ? tSnap.data() || {} : {};
     const requireProof = t.requireProof === true;
@@ -1475,6 +1601,8 @@ subRows?.addEventListener("click", async (e) => {
         await updateDoc(doc(db, VOL_COL, vDoc.id), {
           points: Number(v.points || 0) + addPoints,
           hours: Number(v.hours || 0) + addHours,
+          tasksCompleted: Number(v.tasksCompleted || 0) + 1,
+          lastTaskAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
       }
@@ -1484,6 +1612,7 @@ subRows?.addEventListener("click", async (e) => {
         completedAt: serverTimestamp(),
         verifiedAt: serverTimestamp(),
       });
+
       await pushNotification(
         uid,
         "✅ تم اعتماد المهمة",

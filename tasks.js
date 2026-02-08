@@ -1,6 +1,6 @@
 // tasks.js
 import { auth, db, storage } from "./firebase.js";
-import { toast, setLoading, throttleAction, escapeHTML } from "./ui.js";
+import { toast, setLoading, throttleAction } from "./ui.js";
 
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
@@ -19,8 +19,6 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 import { ref as sRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
-const esc = (s) => escapeHTML(s || "");
-
 const TASKS_COL = "tasks";
 const NOTI_COL = "notifications";
 const SUBMISSIONS_COL = "task_submissions";
@@ -30,6 +28,13 @@ const taskFilter = document.getElementById("taskFilter");
 const taskSearch = document.getElementById("taskSearch");
 const btnRefreshTasks = document.getElementById("btnRefreshTasks");
 const tasksList = document.getElementById("tasksList");
+
+// Proof UI
+const proofPanel = document.getElementById("proofPanel");
+const proofTaskSelect = document.getElementById("proofTaskSelect");
+const proofFile = document.getElementById("proofFile");
+const btnSendProof = document.getElementById("btnSendProof");
+const proofMsg = document.getElementById("proofMsg");
 
 let currentUid = null;
 let timers = [];
@@ -58,6 +63,15 @@ function clearTimers(){
 
 function norm(s){ return String(s||"").trim().toLowerCase(); }
 
+function escapeHtml(s){
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function mapStatus(raw){
   const st = String(raw || "pending");
   if (st === "open") return "pending";
@@ -66,6 +80,8 @@ function mapStatus(raw){
 
 function badge(st){
   if (st === "accepted") return "✅ جارية";
+  if (st === "waiting_proof") return "📎 مطلوب إثبات";
+  if (st === "proof_submitted") return "🕒 بانتظار اعتماد الأدمن";
   if (st === "completed") return "🏁 مكتملة";
   if (st === "expired") return "⛔ منتهية";
   return "⏳ معلّقة";
@@ -92,7 +108,7 @@ async function markTaskAccepted(id){
     await addDoc(collection(db, NOTI_COL), {
       uid: currentUid,
       title: "تم بدء المهمة ✅",
-      message: `تم قبول المهمة: ${esc(t.title || "مهمة")} — الوقت بدأ الآن.`,
+      message: `تم قبول المهمة: ${t.title || "مهمة"} — الوقت بدأ الآن.`,
       type: "task_accepted",
       read: false,
       readAt: null,
@@ -140,6 +156,34 @@ async function markTaskCompleted(id){
   }
 }
 
+async function notifyAdmins(title, message, extra = {}) {
+  try {
+    // send a notification to each active admin
+    const qy = query(
+      collection(db, "users"),
+      where("active", "==", true),
+      where("role", "in", ["admin", "super_admin", "superadmin"]),
+      limit(10),
+    );
+    const snap = await getDocs(qy);
+    const adminUids = snap.docs.map((d) => d.id).filter(Boolean);
+    for (const uid of adminUids) {
+      await addDoc(collection(db, NOTI_COL), {
+        uid,
+        title,
+        message,
+        type: "admin",
+        read: false,
+        readAt: null,
+        createdAt: serverTimestamp(),
+        ...extra,
+      });
+    }
+  } catch (e) {
+    console.log("notifyAdmins error", e);
+  }
+}
+
 async function loadTasks(){
   if (!tasksList) return;
   tasksList.innerHTML = '<div style="color:#64748b">تحميل...</div>';
@@ -148,13 +192,52 @@ async function loadTasks(){
   if (!currentUid) return;
 
   try{
-    const qy = query(collection(db, TASKS_COL), where("assignedTo","==",currentUid), orderBy("createdAt","desc"), limit(50));
+    const qy = query(
+      collection(db, TASKS_COL),
+      where("assignedTo","==",currentUid),
+      orderBy("createdAt","desc"),
+      limit(50)
+    );
     const snap = await getDocs(qy);
 
     const filter = String(taskFilter?.value || "");
     const q = norm(taskSearch?.value || "");
 
     const tasks = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+
+    // ✅ auto-expire (when dueAt passed)
+    for (const t of tasks) {
+      const st = mapStatus(t.status);
+      const dueMs = tsToMs(t.dueAt);
+      if (!dueMs) continue;
+      if (st === "completed" || st === "expired") continue;
+      if (Date.now() > dueMs) {
+        try{
+          await updateDoc(doc(db, TASKS_COL, t.id), {
+            status: "expired",
+            active: false,
+            updatedAt: serverTimestamp(),
+          });
+          t.status = "expired";
+        }catch(e){}
+      }
+    }
+
+    // ✅ proof panel (tasks that require proof)
+    const proofTasks = tasks
+      .filter(t => mapStatus(t.status) === "waiting_proof")
+      .map(t => ({ id:t.id, title:t.title || "مهمة", points: Number(t.points||0), hours: Number(t.durationHours||0) }));
+
+    if (proofPanel) {
+      proofPanel.style.display = proofTasks.length ? "block" : "none";
+    }
+    if (proofTaskSelect) {
+      proofTaskSelect.innerHTML = proofTasks
+        .map(t => `<option value="${t.id}">${escapeHtml(t.title)} • (${t.hours} ساعة / ${t.points} نقطة)</option>`)
+        .join("") || "";
+    }
+    if (proofMsg) proofMsg.textContent = proofTasks.length ? "" : "";
+
     const filtered = tasks.filter(t=>{
       const st = mapStatus(t.status);
       const okSt = filter ? st === filter : true;
@@ -173,7 +256,7 @@ async function loadTasks(){
       return `
         <article class="card" style="padding:14px;border-radius:16px">
           <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
-            <div style="font-weight:900">${esc(t.title || "مهمة")}</div>
+            <div style="font-weight:900">${t.title || "مهمة"}</div>
             <div style="color:#64748b;font-size:13px">${badge(st)}</div>
           </div>
           ${t.details ? `<div style="margin-top:8px;line-height:1.9;color:#334155">${t.details}</div>` : ""}
@@ -185,6 +268,8 @@ async function loadTasks(){
           <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap">
             ${st === "pending" ? `<button class="btn btn--solid" data-accept="${t.id}" type="button">موافقة وبدء العداد</button>` : ""}
             ${st === "accepted" ? `<button class="btn btn--solid" data-complete="${t.id}" type="button">تم التنفيذ ✅</button>` : ""}
+            ${st === "waiting_proof" ? `<div style="color:#b45309;font-weight:800">ارفع الإثبات من أسفل الصفحة</div>` : ""}
+            ${st === "proof_submitted" ? `<div style="color:#64748b;font-weight:800">بانتظار اعتماد الأدمن</div>` : ""}
           </div>
         </article>
       `;
@@ -206,6 +291,16 @@ async function loadTasks(){
       if (st === "pending") {
         el.textContent = "ابدأ بالضغط على (موافقة) لبدء الوقت.";
         el.style.color = "#b45309";
+        return;
+      }
+      if (st === "waiting_proof") {
+        el.textContent = "مطلوب إثبات 📎";
+        el.style.color = "#b45309";
+        return;
+      }
+      if (st === "proof_submitted") {
+        el.textContent = "تم إرسال الإثبات ✅ (بانتظار اعتماد الأدمن)";
+        el.style.color = "#64748b";
         return;
       }
       if (st === "completed") {
@@ -262,7 +357,61 @@ onAuthStateChanged(auth, (user)=>{
   loadTasks();
 });
 
-const proofFile = document.getElementById('proofFile');
+// ✅ Send proof
+btnSendProof?.addEventListener("click", async () => {
+  if (!currentUid) return toast("سجل دخول أولاً.", "warn");
+  const taskId = (proofTaskSelect?.value || "").trim();
+  const file = proofFile?.files?.[0] || null;
+  if (!taskId) return toast("اختر المهمة.", "warn");
+  if (!file) return toast("اختار ملف (صورة أو PDF).", "warn");
+
+  const maxMb = 10;
+  if (file.size > maxMb * 1024 * 1024) return toast(`حجم الملف كبير (أقصى ${maxMb}MB).`, "warn");
+
+  const okType = (file.type || "").startsWith("image/") || file.type === "application/pdf";
+  if (!okType) return toast("الملف لازم يكون صورة أو PDF.", "warn");
+
+  if (proofMsg) proofMsg.textContent = "جارٍ رفع الإثبات...";
+  setLoading(true);
+  try {
+    const safeName = String(file.name || "proof").replaceAll(" ", "_");
+    const path = `task_proofs/${currentUid}/${taskId}/${Date.now()}_${safeName}`;
+    const r = sRef(storage, path);
+    await uploadBytes(r, file);
+    const url = await getDownloadURL(r);
+
+    await addDoc(collection(db, SUBMISSIONS_COL), {
+      uid: currentUid,
+      taskId,
+      url,
+      path,
+      fileName: file.name || "",
+      fileType: file.type || "",
+      status: "pending",
+      createdAt: serverTimestamp(),
+    });
+
+    await updateDoc(doc(db, TASKS_COL, taskId), {
+      status: "proof_submitted",
+      proofStatus: "submitted",
+      proofUrl: url,
+      updatedAt: serverTimestamp(),
+    });
+
+    await notifyAdmins("📎 تم تسليم إثبات", `متطوع (${currentUid}) سلّم إثبات لمهمة (${taskId}).`, { taskId });
+
+    toast("تم إرسال الإثبات ✅", "success");
+    if (proofMsg) proofMsg.textContent = "✅ تم إرسال الإثبات وبانتظار اعتماد الأدمن.";
+    if (proofFile) proofFile.value = "";
+    await loadTasks();
+  } catch (e) {
+    console.error(e);
+    toast("فشل رفع الإثبات.", "error");
+    if (proofMsg) proofMsg.textContent = "❌ فشل رفع الإثبات.";
+  } finally {
+    setLoading(false);
+  }
+});
 
 async function completeTask(id){
   const ref = doc(db, "tasks", id);
@@ -277,7 +426,16 @@ async function completeTask(id){
       updatedAt: serverTimestamp(),
     });
     toast("تم تسجيل الإنجاز ✅ ارفع الإثبات من أسفل الصفحة.", "success");
-    await pushNotification(currentUid, "📎 مطلوب إثبات", `ارفع إثبات للمهمة: ${esc(t.title || "مهمة")}`, "info");
+    await addDoc(collection(db, NOTI_COL), {
+      uid: currentUid,
+      title: "📎 مطلوب إثبات",
+      message: `ارفع إثبات للمهمة: ${t.title || "مهمة"}`,
+      type: "proof_required",
+      read: false,
+      readAt: null,
+      createdAt: serverTimestamp(),
+      taskId: id,
+    });
     return;
   }
 

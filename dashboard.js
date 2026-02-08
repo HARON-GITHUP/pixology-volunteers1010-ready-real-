@@ -1,5 +1,5 @@
 import { auth, db } from "./firebase.js";
-import { toast, escapeHTML } from "./ui.js";
+import { toast } from "./ui.js";
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import { collection, query, where, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
@@ -44,7 +44,7 @@ async function load(){
     topList.innerHTML = top.map((v,i)=>`
       <article class="card" style="padding:14px;border-radius:16px">
         <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
-          <div style="font-weight:950">#${i+1} ${esc(v.name||"—")}</div>
+          <div style="font-weight:950">#${i+1} ${v.name||"—"}</div>
           <div style="color:#64748b;font-size:13px">${badgeFor(v.points)}</div>
         </div>
         <div style="margin-top:8px;color:#64748b;line-height:1.9">

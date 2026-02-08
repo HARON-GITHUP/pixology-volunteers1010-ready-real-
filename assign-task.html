@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>إضافة تاسك</title>
+  <link rel="icon" type="image/png" href="icon-192.png" />
+  <link rel="stylesheet" href="style.css?v=20260208" />
+  <meta name="theme-color" content="#0b1620" />
+</head>
+<body>
+  <header class="topnav">
+    <div class="container topnav__wrap">
+      <a class="brand" href="admin.html" style="gap:10px">
+        <img src="icon-192.png" alt="Pixology" style="width:40px;height:40px" />
+        <span class="brand__text">Pixology • لوحة التحكم</span>
+      </a>
+      <div class="topnav__right">
+        <a class="link" href="admin.html">رجوع للأدمن</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container" style="padding:18px 0 70px">
+    <section class="card" style="padding:16px;border-radius:18px">
+      <h2 style="margin:0 0 10px">➕ إضافة تاسك لمتطوع</h2>
+      <p class="muted" style="margin:0 0 12px;line-height:1.8">لو فعلت (يتطلب إثبات) لن تُضاف النقاط/الساعات إلا بعد رفع الإثبات واعتماد الأدمن.</p>
+
+      <div class="admin-grid-3">
+        <div class="card admin-subcard">
+          <label class="lbl">المتطوع</label>
+          <div id="targetInfo" class="hint">تحميل...</div>
+          <div class="hint" style="margin-top:8px">UID: <span id="targetUid" style="font-family:ui-monospace,monospace">—</span></div>
+        </div>
+
+        <div class="card admin-subcard">
+          <label class="lbl">عنوان المهمة</label>
+          <input id="taskTitle" placeholder="مثال: تجهيز بوست للدعوة" />
+          <div class="admin-grid-2" style="margin-top:10px">
+            <div class="field">
+              <label class="lbl" for="taskHours">المدة (ساعات)</label>
+              <input id="taskHours" type="number" min="1" value="5" />
+            </div>
+            <div class="field">
+              <label class="lbl" for="taskPoints">⭐ النقاط</label>
+              <input id="taskPoints" type="number" min="0" value="10" />
+            </div>
+          </div>
+          <label class="chk" style="margin-top:10px">
+            <input id="taskRequireProof" type="checkbox" />
+            يتطلب إثبات (صورة/PDF)
+          </label>
+        </div>
+
+        <div class="card admin-subcard">
+          <label class="lbl">وصف المهمة</label>
+          <textarea id="taskDesc" rows="6" placeholder="اكتب تفاصيل المهمة..."></textarea>
+          <button id="btnCreateTask" class="btn btn--solid" type="button" style="width:100%; margin-top:10px">إرسال المهمة</button>
+          <div id="msg" class="hint" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="./assign-task.js?v=20260208"></script>
+</body>
+</html>

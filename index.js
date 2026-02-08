@@ -1,6 +1,21 @@
-// index.js (FULL CLEAN VERSION)
+// ===============================
+// index.js (FIXED + SAFE VERSION)
+// - No white screen
+// - Public listing from public_volunteers
+// - Graceful fallback + clear error
+// ===============================
+
+function showError(msg) {
+  const el = document.getElementById("appError") || document.body;
+  const box = document.createElement("div");
+  box.style.cssText =
+    "position:fixed;inset:20px;max-width:720px;margin:auto;height:max-content;padding:16px;border:1px solid #ffb4b4;background:#fff3f3;color:#7a0000;border-radius:12px;font-family:system-ui;z-index:99999";
+  box.innerHTML = `<b>تنبيه</b><div style="margin-top:8px">${msg}</div>`;
+  el.appendChild(box);
+}
+
 import { db, auth } from "./firebase.js";
-import { toast, setLoading, escapeHTML, safeUrl } from "./ui.js";
+import { toast } from "./ui.js";
 
 import {
   collection,
@@ -11,6 +26,7 @@ import {
   doc,
   setDoc,
   serverTimestamp,
+  limit,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 import {
@@ -45,9 +61,7 @@ const ROLE_KEY = "pix_role";
 
 /** ✅ اقفل شاشة البداية لو المستخدم اختار قبل كده */
 const savedRole = localStorage.getItem(ROLE_KEY);
-if (savedRole && startGate) {
-  startGate.style.display = "none";
-}
+if (savedRole && startGate) startGate.style.display = "none";
 
 let cache = [];
 
@@ -67,9 +81,9 @@ function closeMenu() {
   toggle(loginMenu, false);
 }
 
-/** ================== كارت المتطوع ================== */
+/** ================== Card ================== */
 function cardHTML(v) {
-  const imgRaw =
+  const img =
     v.photoData ||
     v.photoURL ||
     v.photoUrl ||
@@ -79,21 +93,23 @@ function cardHTML(v) {
     v.photo ||
     "p.jpg";
 
-  const img = safeUrl(imgRaw, "p.jpg");
-
-  const name = escapeHTML(v.name || "متطوع");
+  const name = v.name || "متطوع";
   const hours = Number(v.hours ?? 0);
 
-  const id = escapeHTML(v.volunteerId || v.id || "—");
-  const gender = escapeHTML(v.gender || "");
+  // ✅ لازم يبقى في ID ثابت للروابط
+  // الأفضل في public_volunteers تخلي عندك field اسمه uid أو volunteerId
+  const id = v.uid || v.volunteerId || v.id || "—";
+
+  const gender = v.gender || "";
 
   return `
     <article class="course-card" data-gender="${gender}">
       <div class="course-card__img">
-        <img 
-          src="${img}" 
+        <img
+          src="${img}"
           alt="صورة المتطوع ${name}"
           onerror="this.src='p.jpg'"
+          loading="lazy"
         />
         <span class="ribbon ribbon--pink">المتطوع</span>
         <span class="price-badge">${hours}<br /><small>ساعات</small></span>
@@ -104,8 +120,13 @@ function cardHTML(v) {
         <div class="course-card__title">${name}</div>
         <p class="course-card__desc">ID: ${id}</p>
 
-        <div class="course-card__meta">
-          <span>👤 ${gender || "—"}</span>
+        <div class="actions">
+          <a class="btn btn--outline" href="volunteer.html?id=${encodeURIComponent(id)}">
+            الدخول للملف الشخصي
+          </a>
+          <a class="btn btn--solid" href="verify.html?id=${encodeURIComponent(id)}">
+            Verify
+          </a>
         </div>
       </div>
     </article>
@@ -116,23 +137,23 @@ function cardHTML(v) {
 function render() {
   if (!grid) return;
 
-  const q = (searchEl?.value || "").trim().toLowerCase();
+  const qText = (searchEl?.value || "").trim().toLowerCase();
   const g = (genderEl?.value || "").trim();
   const mode = (gradeEl?.value || "").trim();
 
   let list = cache.slice();
 
-  if (q) {
-    list = list.filter(
-      (v) =>
-        (v.name || "").toLowerCase().includes(q) ||
-        (v.volunteerId || v.id || "").toString().toLowerCase().includes(q),
-    );
+  if (qText) {
+    list = list.filter((v) => {
+      const name = (v.name || "").toLowerCase();
+      const id = (v.uid || v.volunteerId || v.id || "")
+        .toString()
+        .toLowerCase();
+      return name.includes(qText) || id.includes(qText);
+    });
   }
 
-  if (g) {
-    list = list.filter((v) => (v.gender || "") === g);
-  }
+  if (g) list = list.filter((v) => (v.gender || "") === g);
 
   if (mode === "اكبر عدد ساعات") {
     list.sort((a, b) => Number(b.hours || 0) - Number(a.hours || 0));
@@ -148,34 +169,66 @@ function render() {
   if (volCount) volCount.textContent = String(cache.length);
 }
 
-/** ================== Load ================== */
-async function load() {
-  // ✅ مهم: الصفحة الرئيسية لازم تعرض اللي ينفع المستخدم العادي يشوفه
-  // وبحسب قواعدك الحالية: pixology_volunteers القراءة للإدمن فقط
-  // فإما:
-  // 1) تغيّر القواعد وتسمح read للجميع للمتطوعين المعتمدين
-  // أو
-  // 2) تخلي الصفحة دي ما تقراش المتطوعين لو مش أدمن
-  //
-  // هنا هنمشي على الحل الآمن: نجرب نقرأ، ولو اترفضت القواعد نعرض رسالة واضحة
+/** ================== Load Volunteers (PUBLIC SAFE) ================== */
+async function loadPublicVolunteers() {
+  // ✅ الصفحة الرئيسية لازم تشتغل لأي حد
+  // هنقرأ من public_volunteers (read: true في rules)
+  // ولو الكوليكشن فاضي/مش موجود هنطلع رسالة واضحة
 
   try {
-    const snap = await getDocs(
-      query(collection(db, "pixology_volunteers"), where("status","in",["Active","Certified"]),
+    // ترتيب اختياري حسب createdAt
+    // لو عندك docs قديمة من غير createdAt، fallback هيشتغل
+    let snap;
+
+    try {
+      const q = query(
+        collection(db, "public_volunteers"),
         orderBy("createdAt", "desc"),
-      ),
-    );
+        limit(60),
+      );
+      snap = await getDocs(q);
+    } catch (orderErr) {
+      // fallback لو مفيش createdAt أو مفيش index
+      console.warn("public_volunteers orderBy fallback:", orderErr);
+      snap = await getDocs(
+        query(collection(db, "public_volunteers"), limit(60)),
+      );
+    }
 
     cache = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     render();
+
+    // عدادات
+    if (reqCount) reqCount.textContent = "—"; // Pending للأدمن فقط
   } catch (e) {
-    console.log("load volunteers blocked by rules:", e);
+    console.error("loadPublicVolunteers error:", e);
     cache = [];
     render();
-  }
 
-  // ✅ عداد Pending: ده للأدمن فقط (المستخدم العادي هيترفض)
-  if (reqCount) reqCount.textContent = "—";
+    showError(
+      "تعذر تحميل المتطوعين. تأكد إنك أضفت Rules الخاصة بـ public_volunteers وإن الكوليكشن موجود وفيه بيانات.",
+    );
+  }
+}
+
+/** ================== (Optional) Admin-only Pending Count ================== */
+async function loadPendingCountIfAdmin() {
+  // مش هنكسر الصفحة لو فشل
+  try {
+    if (!auth.currentUser) return;
+    // محاولة قراءة بسيطة من volunteer_requests (لو أدمن هتشتغل)
+    const snap = await getDocs(
+      query(
+        collection(db, "volunteer_requests"),
+        where("status", "==", "pending"),
+        limit(50),
+      ),
+    );
+    if (reqCount) reqCount.textContent = String(snap.size);
+  } catch (e) {
+    // مش أدمن أو ممنوع → تجاهل
+    if (reqCount) reqCount.textContent = "—";
+  }
 }
 
 /** ================== Events ================== */
@@ -212,7 +265,8 @@ loginGoogle?.addEventListener("click", async () => {
     await signInWithPopup(auth, provider);
     closeMenu();
     toast("تم تسجيل الدخول بحساب Google ✅");
-  } catch {
+  } catch (err) {
+    console.error(err);
     toast("فشل تسجيل الدخول");
   }
 });
@@ -221,7 +275,8 @@ btnLogout?.addEventListener("click", async () => {
   try {
     await signOut(auth);
     toast("تم تسجيل الخروج ✅");
-  } catch {
+  } catch (err) {
+    console.error(err);
     toast("فشل تسجيل الخروج");
   }
 });
@@ -243,10 +298,14 @@ onAuthStateChanged(auth, (user) => {
     }
     if (btnLogout) btnLogout.style.display = "inline-flex";
     if (myProfileLink) myProfileLink.style.display = "inline-flex";
+
+    // جرب نجيب pending count للأدمن فقط
+    loadPendingCountIfAdmin();
   } else {
     if (btnLogin) btnLogin.textContent = "تسجيل / إنشاء حساب";
     if (btnLogout) btnLogout.style.display = "none";
     if (myProfileLink) myProfileLink.style.display = "none";
+    if (reqCount) reqCount.textContent = "—";
   }
 });
 
@@ -266,45 +325,32 @@ startGate?.addEventListener("click", async (e) => {
       user = cred.user;
     }
 
-    // ✅ users/{uid}
-    // - volunteer: Pending until admin approves
-    // - org: active مباشرة
-    const fixedType = type === "personal" ? "volunteer" : type; // legacy support
+    await setDoc(
+      doc(db, "users", user.uid),
+      {
+        uid: user.uid,
+        role: type, // volunteer | org
+        active: true,
+        displayName: user.displayName || "",
+        email: user.email || "",
+        photoURL: user.photoURL || "",
+        updatedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
 
-    const base = {
-      uid: user.uid,
-      role: fixedType, // volunteer | org
-      displayName: user.displayName || "",
-      email: user.email || "",
-      photoURL: user.photoURL || "",
-      updatedAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-    };
-
-    const extra =
-      fixedType === "volunteer"
-        ? { active: false, pending: true }
-        : { active: true, pending: false };
-
-    await setDoc(doc(db, "users", user.uid), { ...base, ...extra }, { merge: true });
-
-localStorage.setItem(ROLE_KEY, type);
+    localStorage.setItem(ROLE_KEY, type);
 
     if (startGate) startGate.style.display = "none";
     closeMenu();
 
-    if (fixedType === "volunteer") {
-      toast("تم تسجيل الدخول ✅ أكمل تقديم طلب التطوع");
-      window.location.href = "register.html";
-      return;
-    }
-
-    toast("تم التسجيل كمؤسسة ✅");
+    toast(type === "org" ? "تم التسجيل كمؤسسة ✅" : "تم التسجيل كمتطوع ✅");
   } catch (err) {
-    toast("لم يتم تسجيل الدخول");
     console.log(err);
+    toast("لم يتم تسجيل الدخول");
   }
 });
 
 /** ================== Init ================== */
-load();
+loadPublicVolunteers();
