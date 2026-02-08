@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    function userDoc() {
+      return signedIn()
+        ? get(/databases/$(db)/documents/users/$(request.auth.uid))
+        : null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && userDoc() != null
+        && userDoc().data.active == true
+        && (userDoc().data.role in ["admin","superadmin","super_admin","superAdmin"]);
+    }
+
+    function isVolunteer() {
+      return signedIn()
+        && userDoc() != null
+        && userDoc().data.active == true
+        && userDoc().data.role == "volunteer";
+    }
+
+    // ================= users =================
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // ============ volunteer requests ============
+    match /volunteer_requests/{id} {
+      allow create: if signedIn();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // ============ volunteers public list ============
+    // (اختياري) لو عايز الصفحة الرئيسية تعرض المتطوعين، افتح read للجميع
+    match /pixology_volunteers/{id} {
+      allow read: if true; // public read for approved volunteers list
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ================= tasks =================
+    match /tasks/{id} {
+      allow read: if isAdmin() || isVolunteer();
+      allow create, delete: if isAdmin();
+
+      // Volunteer limited updates
+      allow update: if isVolunteer()
+        && resource.data.assignedTo == request.auth.uid
+        && request.resource.data.assignedTo == resource.data.assignedTo
+        && request.resource.data.points == resource.data.points
+        && request.resource.data.durationHours == resource.data.durationHours
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.status in ["accepted","completed"]
+        && resource.data.status in ["pending","accepted"];
+
+      allow update: if isAdmin();
+    }
+
+    // ============== submissions ==============
+    match /task_submissions/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isVolunteer() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // ============== notifications ==============
+    match /notifications/{id} {
+      allow read: if signedIn() && resource.data.toUid == request.auth.uid;
+      allow create: if isAdmin();
+      allow update: if signedIn() && resource.data.toUid == request.auth.uid
+        && request.resource.data.read == true;
+      allow delete: if isAdmin();
+    }
+
+    // ============== events/logs ==============
+    match /task_events/{id} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // default: lock everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
